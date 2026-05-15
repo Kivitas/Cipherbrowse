@@ -1,0 +1,30 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local runtime state
+.cipherbrowse/
+
+# OS / editor
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Build output
+dist/
+coverage/
+
+# Large local media runtime
+tools/**/mpv.exe
+
+# Environment files
+.env
+.env.*

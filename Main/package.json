@@ -1,0 +1,42 @@
+{
+  "name": "cipherbrowse",
+  "version": "1.0.0",
+  "description": "Terminal browser with site search, media search, AI queries, playback, exports, and recon utilities.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "bin": {
+    "cipherbrowse": "./src/index.js",
+    "cbrowse": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "tools",
+    "README.md",
+    "DOCUMENTATION.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start":  "node ./src/index.js",
+    "smoke":  "node ./src/index.js --help",
+    "check":  "node -c ./src/index.js",
+    "verify": "node ./scripts/verify.js",
+    "pkg:win": "pkg src/index.js --targets node18-win-x64 --output dist/Cipherbrowse.exe"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cli", "browser", "privacy", "terminal",
+    "recon", "security", "text-browser", "ai", "lynx"
+  ],
+  "author": "Kivitas",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/Kivitas/Cipherbrowse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kivitas/Cipherbrowse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kivitas/Cipherbrowse/issues"
+  }
+}
