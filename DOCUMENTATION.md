@@ -1,6 +1,6 @@
 # CipherBrowse Documentation
 
-This is the full command and usage reference for `CipherBrowse 1.0.0`.
+This is the full command and usage reference for `CipherBrowse 1.0.2`.
 
 ## 1. Launching
 

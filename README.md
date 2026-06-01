@@ -6,7 +6,7 @@ This repository is structured so people launch the app from the top level with `
 
 ## Version
 
-`1.0.0`
+`1.0.2`
 
 ## Features
 

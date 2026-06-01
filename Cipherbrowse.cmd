@@ -20,7 +20,7 @@ if exist "%NODE_CMD%" goto :RUN
 
 :: 4. If Node is not found, attempt to download it automatically
 echo =====================================================================
-echo Node.js is required to run CipherBrowse, but was not found.
+echo Node.js is required to run CipherBrowse v1.0.2, but was not found.
 echo =====================================================================
 echo.
 echo We will automatically download a portable, lightweight Node.js
@@ -85,7 +85,7 @@ if not exist "%ENTRY%" (
 :: If Node exited with an error, pause so the user can read the error trace
 if %ERRORLEVEL% neq 0 (
   echo.
-  echo [CipherBrowse exited with error code %ERRORLEVEL%]
+  echo [CipherBrowse v1.0.2 exited with error code %ERRORLEVEL%]
   echo.
   rem Detect if launched from Windows Explorer [double-clicked]
   echo %cmdcmdline% | findstr /i /c:"/c" >nul

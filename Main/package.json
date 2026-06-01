@@ -1,6 +1,6 @@
 {
   "name": "cipherbrowse",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Terminal browser with site search, media search, AI queries, playback, exports, and recon utilities.",
   "main": "src/index.js",
   "type": "commonjs",
