@@ -21,17 +21,23 @@ npm run verify
 src/index.js
 ```
 
-## Bundled Tools
+## Local Media Tools
 
 ```text
 tools/win32-x64/mpv.exe
 tools/win32-x64/yt-dlp.exe
 ```
 
-`mpv.exe` is optional and not committed in the source repo because the Windows binary exceeds GitHub's normal file size limit. For video and image playback on Windows, install `mpv` and place the executable at:
+`mpv.exe` and `yt-dlp.exe` are optional local runtime tools and are not committed in the source repo when unsigned executable uploads are blocked. For video and image playback on Windows, install `mpv` and place the executable at:
 
 ```text
 tools/win32-x64/mpv.exe
+```
+
+For better video extraction, place `yt-dlp.exe` at:
+
+```text
+tools/win32-x64/yt-dlp.exe
 ```
 
 ## Local Storage

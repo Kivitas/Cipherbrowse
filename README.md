@@ -2,11 +2,11 @@
 
 CipherBrowse is a terminal browser and search toolkit built for plain CMD / PowerShell use. It combines text-page browsing, site-aware search, image and video search grids, mpv playback, AI prompts with user-supplied API keys, exports, bookmarks, notes, and recon-style utilities in one CLI.
 
-This repository is structured so people launch the app from the top level with `Cipherbrowse.cmd`, while the actual app code and bundled tools live under `Main/`.
+The source repository keeps the runnable app under `Main/`. Windows users can rebuild the optional top-level `Cipherbrowse.cmd` launcher locally with [INSTALLATION.md](./INSTALLATION.md) when GitHub or organization policy blocks unsigned command files.
 
 ## Version
 
-`1.0.2`
+`1.0.1`
 
 ## Features
 
@@ -16,14 +16,14 @@ This repository is structured so people launch the app from the top level with `
 - image search grids with `/s <query> --images`
 - video search grids with `/s <query> --videos`
 - image opening through `mpv`
-- video playback through `mpv` and bundled `yt-dlp`
+- video playback through `mpv` and optional local `yt-dlp`
 - AI chat using user-supplied API keys
 - bookmarks, notes, alerts, exports, history, and page tools
 - recon utilities like `/headers`, `/robots`, `/ssl`, `/whois`, `/trace`, `/myip`
 
 ## Launch
 
-From the repository root:
+After rebuilding the local launcher, from the repository root:
 
 ```powershell
 .\Cipherbrowse.cmd
@@ -43,6 +43,8 @@ Requirements:
 - Node.js `18+`
 - Windows
 - optional local media tools under `Main/tools/win32-x64/`
+
+If GitHub or an organization policy strips unsigned `.cmd`, `.bat`, or `.exe` files, follow [INSTALLATION.md](./INSTALLATION.md) to rebuild `Cipherbrowse.cmd` locally and install `mpv` and `yt-dlp`.
 
 For video and image playback, install `mpv` and place the executable here:
 
@@ -103,8 +105,8 @@ Example captures are stored in [screenshots](./screenshots).
 
 ```text
 Cipherbrowse/
-  Cipherbrowse.cmd
   README.md
+  INSTALLATION.md
   DOCUMENTATION.md
   CONTRIBUTING.md
   SECURITY.md
@@ -163,6 +165,7 @@ This project is licensed under `GNU AGPL v3.0`.
 ## Repository Files
 
 - [DOCUMENTATION.md](./DOCUMENTATION.md) for full command usage
+- [INSTALLATION.md](./INSTALLATION.md) for rebuilding the local Windows launcher and media tools
 - [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow
 - [SECURITY.md](./SECURITY.md) for reporting and security scope
 

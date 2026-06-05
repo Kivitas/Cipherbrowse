@@ -24,6 +24,6 @@ tools/linux-x64/mpv
 
 Packaging notes:
 
-- `npm run package:exe` includes `tools/**/*` as pkg assets.
-- In packaged mode, CipherBrowse extracts bundled tools into `.cipherbrowse/runtime-tools/` beside the app data folder and launches them from there.
-- This keeps the app portable and avoids depending on global installs.
+- `npm run pkg:win` writes the packaged Windows executable to `dist/Cipherbrowse.exe`.
+- Media tools are local runtime dependencies. Keep `mpv.exe`, `yt-dlp.exe`, `mpv.com`, and DLL files out of source control when unsigned executable uploads are blocked.
+- This keeps the source repository portable and avoids depending on global installs.

@@ -6,7 +6,7 @@ const APP_VERSION = (() => {
   try {
     return require("../../package.json").version;
   } catch {
-    return "1.0.2";
+    return "1.0.1";
   }
 })();
 

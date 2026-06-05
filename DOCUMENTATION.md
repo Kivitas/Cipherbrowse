@@ -1,6 +1,6 @@
 # CipherBrowse Documentation
 
-This is the full command and usage reference for `CipherBrowse 1.0.2`.
+This is the full command and usage reference for `CipherBrowse 1.0.1`.
 
 ## 1. Launching
 
@@ -9,6 +9,8 @@ From the repository root:
 ```powershell
 .\Cipherbrowse.cmd
 ```
+
+If `Cipherbrowse.cmd` is missing because unsigned command files are blocked, rebuild it with [INSTALLATION.md](./INSTALLATION.md).
 
 From the app folder:
 
@@ -373,20 +375,20 @@ Typical files:
 
 These files are local runtime data and should not be committed.
 
-## 14. Tool Bundles
+## 14. Local Media Tools
 
-Bundled Windows tools live under:
+Optional Windows media tools live under:
 
 ```text
 Main/tools/win32-x64/
 ```
 
-Important files:
+Expected local files:
 
+- `mpv.exe`
 - `yt-dlp.exe`
-- `d3dcompiler_43.dll`
 
-`mpv.exe` is intentionally not committed because the Windows binary is larger than GitHub's normal file limit. For local playback, install mpv on PATH or place `mpv.exe` in `Main/tools/win32-x64/`.
+These executable files are intentionally not committed when unsigned executable uploads are blocked. For playback, install mpv on PATH or place `mpv.exe` in `Main/tools/win32-x64/`. For better video extraction, place `yt-dlp.exe` in the same folder.
 
 ## 15. Verification
 

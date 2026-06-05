@@ -1,6 +1,6 @@
 # CipherBrowse (Main Package)
 
-This folder contains the runnable package for CipherBrowse `1.0.2`.
+This folder contains the runnable package for CipherBrowse `1.0.1`.
 
 For repository-level usage, launcher instructions, screenshots, and the full GitHub-facing project overview, see:
 

@@ -32,7 +32,7 @@ All three must pass before opening a PR.
 
 ```text
 Cipherbrowse/
-  Cipherbrowse.cmd
+  INSTALLATION.md
   Main/
     src/
       index.js

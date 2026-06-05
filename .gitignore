@@ -25,8 +25,15 @@ dist/
 Main/dist/
 coverage/
 
-# Large local media runtime
+# Locally rebuilt Windows launchers
+*.cmd
+*.bat
+
+# Local media/runtime binaries
 Main/tools/**/mpv.exe
+Main/tools/**/mpv.com
+Main/tools/**/yt-dlp.exe
+Main/tools/**/*.dll
 
 # Temp / logs
 *.log

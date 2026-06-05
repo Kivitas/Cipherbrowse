@@ -989,8 +989,14 @@ async function rerunSearchState(search, page, pushNav = false) {
 }
 
 function findTool(name) {
-  const bundled = path.join(PATHS.TOOLS_DIR, PATHS.PLATFORM_KEY, TOOL_BINS[name]);
-  if (fs.existsSync(bundled)) return bundled;
+  const candidates = [
+    path.join(PATHS.TOOLS_DIR, PATHS.PLATFORM_KEY, TOOL_BINS[name]),
+    path.join(PATHS.TOOLS_DIR, process.platform, TOOL_BINS[name]),
+    path.join(PATHS.TOOLS_DIR, "common", TOOL_BINS[name]),
+  ];
+  for (const bundled of candidates) {
+    if (fs.existsSync(bundled)) return bundled;
+  }
   try {
     const which  = process.platform === "win32" ? "where" : "which";
     const result = spawnSync(which, [TOOL_BINS[name]], { encoding: "utf8", windowsHide: true });
