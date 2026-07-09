@@ -111,24 +111,27 @@ function shouldTryNextAIModel(err) {
 function createAIKeyStore({ fs, keyFile, secretFile, ensureDataDir }) {
   const cipherStore = createAESCipherStore({ fs, secretFile, ensureDataDir });
 
-  function loadRaw() {
+  async function loadRaw() {
     try {
-      return JSON.parse(fs.readFileSync(keyFile, "utf8"));
+      return JSON.parse(await fs.promises.readFile(keyFile, "utf8"));
     } catch {
       return {};
     }
   }
 
-  function saveRaw(data) {
-    ensureDataDir();
-    fs.writeFileSync(keyFile, JSON.stringify(data, null, 2), "utf8");
+  async function saveRaw(data) {
+    if (ensureDataDir) {
+      const res = ensureDataDir();
+      if (res instanceof Promise) await res;
+    }
+    await fs.promises.writeFile(keyFile, JSON.stringify(data, null, 2), "utf8");
   }
 
-  function decodeStoredKey(provider, item) {
+  async function decodeStoredKey(provider, item) {
     if (!item) return null;
     try {
       if (cipherStore.isEncryptedPayload(item)) {
-        return normalizeAIKeyForProvider(provider, cipherStore.decryptText(item));
+        return normalizeAIKeyForProvider(provider, await cipherStore.decryptText(item));
       }
       if (typeof item === "string") {
         try {
@@ -141,15 +144,15 @@ function createAIKeyStore({ fs, keyFile, secretFile, ensureDataDir }) {
     return null;
   }
 
-  function getKeys(provider) {
-    const raw = loadRaw();
+  async function getKeys(provider) {
+    const raw = await loadRaw();
     const stored = raw[provider];
     const array = Array.isArray(stored) ? stored : stored ? [stored] : [];
     const keys = [];
     let changed = false;
 
     for (const item of array) {
-      const decoded = decodeStoredKey(provider, item);
+      const decoded = await decodeStoredKey(provider, item);
       if (!decoded) {
         changed = true;
         continue;
@@ -159,28 +162,28 @@ function createAIKeyStore({ fs, keyFile, secretFile, ensureDataDir }) {
     }
 
     if (changed) {
-      raw[provider] = keys.map(key => cipherStore.encryptText(key));
-      saveRaw(raw);
+      raw[provider] = await Promise.all(keys.map(key => cipherStore.encryptText(key)));
+      await saveRaw(raw);
     }
 
     return keys;
   }
 
-  function addKey(provider, key) {
+  async function addKey(provider, key) {
     const normalized = normalizeAIKeyForProvider(provider, key);
     if (!normalized) return false;
-    const raw = loadRaw();
-    const existing = getKeys(provider);
+    const raw = await loadRaw();
+    const existing = await getKeys(provider);
     if (existing.includes(normalized)) return false;
-    raw[provider] = [...existing, normalized].map(value => cipherStore.encryptText(value));
-    saveRaw(raw);
+    raw[provider] = await Promise.all([...existing, normalized].map(value => cipherStore.encryptText(value)));
+    await saveRaw(raw);
     return true;
   }
 
-  function clearKeys(provider) {
-    const raw = loadRaw();
+  async function clearKeys(provider) {
+    const raw = await loadRaw();
     delete raw[provider];
-    saveRaw(raw);
+    await saveRaw(raw);
   }
 
   return { loadRaw, saveRaw, getKeys, addKey, clearKeys };

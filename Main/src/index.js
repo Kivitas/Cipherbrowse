@@ -22,6 +22,36 @@ const {
 } = require("./core/config");
 
 const { cleanVisibleText, decodeEntities } = require("./core/text");
+const { fetchUrl, fetchUrlWithHeaders, fetchJson } = require("./core/network");
+const {
+  ensureDataDir,
+  loadState,
+  saveState,
+  loadJson,
+  saveJson,
+  uniqueRecent,
+  isWithinSearchHistoryTtl,
+  normalizeSearchHistory,
+  loadEncryptedSearchHistory,
+  saveEncryptedSearchHistory,
+  logLine,
+} = require("./core/storage");
+const {
+  THEMES,
+  setTheme,
+  O1, O2, O3, O4, LAV, RS,
+  C,
+  termWidth,
+  hr,
+  centerPlain,
+  centerOffset,
+  formatHeaderTimestamp,
+  printTitleLine,
+  wrap,
+  wrapLines,
+  printAIChatReply,
+  getTheme,
+} = require("./ui/render");
 
 const {
   AI_PROVIDERS,
@@ -73,41 +103,7 @@ const {
 
 const { createSHA512AESCipherStore } = require("./core/security");
 
-// ─── Theme system ─────────────────────────────────────────────────────────────
-// All UI chrome uses hacker green.  Orange is reserved for the ASCII banner.
-// Lavender is reserved for the copyright line only.
-const THEMES = {
-  green: { primary: "\x1b[32m", secondary: "\x1b[92m", accent: "\x1b[32;1m" },
-  amber: { primary: "\x1b[33m", secondary: "\x1b[93m", accent: "\x1b[33;1m" },
-  blue:  { primary: "\x1b[34m", secondary: "\x1b[94m", accent: "\x1b[34;1m" },
-  cyan:  { primary: "\x1b[36m", secondary: "\x1b[96m", accent: "\x1b[36;1m" },
-  white: { primary: "\x1b[37m", secondary: "\x1b[97m", accent: "\x1b[97;1m" },
-};
 
-let currentTheme = "green";
-
-// ─── Banner colour palette (orange shades only) ───────────────────────────────
-const O1 = "\x1b[38;5;202m"; // deep burnt-orange  — shadow/edge
-const O2 = "\x1b[38;5;208m"; // mid orange         — body fill
-const O3 = "\x1b[38;5;214m"; // bright orange      — highlight
-const O4 = "\x1b[38;5;220m"; // pale gold           — top shine
-// Lavender for the copyright tagline only
-const LAV = "\x1b[38;5;183m";
-const RS  = "\x1b[0m";
-
-// ─── Global colour shortcuts ──────────────────────────────────────────────────
-const C = {
-  get p() { return THEMES[currentTheme].primary; },
-  get s() { return THEMES[currentTheme].secondary; },
-  get a() { return THEMES[currentTheme].accent; },
-  dim:    "\x1b[2m",
-  bold:   "\x1b[1m",
-  reset:  "\x1b[0m",
-  red:    "\x1b[31m",
-  yellow: "\x1b[33m",
-  cyan:   "\x1b[36m",
-  white:  "\x1b[97m",
-};
 
 // ─── Session state ────────────────────────────────────────────────────────────
 const session = {
@@ -129,112 +125,16 @@ const session = {
 };
 
 // ─── Filesystem helpers ───────────────────────────────────────────────────────
-function ensureDataDir() {
-  if (!fs.existsSync(PATHS.DATA_DIR)) fs.mkdirSync(PATHS.DATA_DIR, { recursive: true });
-  if (!fs.existsSync(PATHS.EXPORTS_DIR)) fs.mkdirSync(PATHS.EXPORTS_DIR, { recursive: true });
-}
 
-const searchHistoryCipher = createSHA512AESCipherStore({
-  fs,
-  secretFile: PATHS.SEARCH_HISTORY_SECRET_FILE,
-  ensureDataDir,
-});
 
-function loadJson(filePath, fallback = []) {
-  try {
-    const stat = fs.statSync(filePath);
-    if (stat.size > 5 * 1024 * 1024) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
 
-function saveJson(filePath, value) {
-  ensureDataDir();
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), "utf8");
-  fs.renameSync(tempPath, filePath);
-}
 
-function loadState()          { return loadJson(PATHS.STATE_PATH, {}); }
-function saveState(nextState) { saveJson(PATHS.STATE_PATH, nextState); }
 
-function normalizeSearchHistory(list) {
-  return uniqueRecent(
-    (Array.isArray(list) ? list : []).map(item => ({
-      query:        cleanVisibleText(item?.query || ""),
-      url:          item?.url    || "",
-      at:           item?.at     || "",
-      mode:         item?.mode   || "web",
-      kind:         item?.kind   || item?.mode || "web",
-      displayQuery: cleanVisibleText(item?.displayQuery || item?.query || ""),
-      page:         Number(item?.page || 1),
-      siteHost:     item?.siteHost || null,
-    })),
-    LIMITS.MAX_HISTORY,
-    item => `${item.kind}|${item.query}|${item.page}|${item.siteHost || ""}`,
-  ).filter(item => isWithinSearchHistoryTtl(item));
-}
 
-function loadEncryptedSearchHistory() {
-  const payload = loadJson(PATHS.SEARCH_HISTORY_FILE, null);
-  if (!payload || !searchHistoryCipher.isEncryptedPayload(payload.data || payload)) return [];
-  try {
-    const decrypted = searchHistoryCipher.decryptText(payload.data || payload);
-    return normalizeSearchHistory(JSON.parse(decrypted));
-  } catch (error) {
-    logLine(`search history decrypt failed: ${error.message}`);
-    return [];
-  }
-}
 
-function saveEncryptedSearchHistory(list) {
-  const entries = normalizeSearchHistory(list);
-  saveJson(PATHS.SEARCH_HISTORY_FILE, {
-    version: 1,
-    encryptedAt: new Date().toISOString(),
-    keyDerivation: "sha512",
-    ttlMs: LIMITS.SEARCH_HISTORY_TTL_MS,
-    data: searchHistoryCipher.encryptText(JSON.stringify(entries)),
-  });
-}
-
-function logLine(message) {
-  try {
-    ensureDataDir();
-    try {
-      const stat = fs.statSync(PATHS.LOG_PATH);
-      if (stat.size > 1024 * 1024) {
-        const lines = fs.readFileSync(PATHS.LOG_PATH, "utf8").split(/\r?\n/).filter(Boolean);
-        fs.writeFileSync(PATHS.LOG_PATH, `${lines.slice(-500).join("\n")}\n`, "utf8");
-      }
-    } catch {}
-    fs.appendFileSync(PATHS.LOG_PATH, `[${new Date().toISOString()}] ${message}\n`, "utf8");
-  } catch {}
-}
 
 // ─── History helpers ──────────────────────────────────────────────────────────
-function uniqueRecent(list, limit, keyFn) {
-  const out  = [];
-  const seen = new Set();
-  for (const item of Array.isArray(list) ? list : []) {
-    if (!item) continue;
-    const key = keyFn(item);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
 
-function isWithinSearchHistoryTtl(item, now = Date.now()) {
-  const at = Date.parse(item?.at || "");
-  return Number.isFinite(at) && (now - at) <= LIMITS.SEARCH_HISTORY_TTL_MS;
-}
 
 function pruneSearchHistory() {
   const now = Date.now();
@@ -243,8 +143,8 @@ function pruneSearchHistory() {
     .slice(0, LIMITS.MAX_HISTORY);
 }
 
-function loadPersistedState() {
-  const state        = loadState();
+async function loadPersistedState() {
+  const state        = await loadState();
   let shouldPersist  = false;
 
   if (Array.isArray(state.pageHistory)) {
@@ -259,34 +159,34 @@ function loadPersistedState() {
     );
   }
 
-  const encryptedSearchHistory = loadEncryptedSearchHistory();
+  const encryptedSearchHistory = await loadEncryptedSearchHistory();
   if (encryptedSearchHistory.length) {
     session.searchHistory = encryptedSearchHistory;
   } else if (Array.isArray(state.searchHistory)) {
     session.searchHistory = normalizeSearchHistory(state.searchHistory);
-    if (session.searchHistory.length) saveEncryptedSearchHistory(session.searchHistory);
+    if (session.searchHistory.length) await saveEncryptedSearchHistory(session.searchHistory);
     delete state.searchHistory;
     shouldPersist = true;
   }
 
-  if (state.theme && THEMES[state.theme]) currentTheme = state.theme;
+  if (state.theme) setTheme(state.theme);
 
-  const aliases = loadJson(PATHS.ALIASES_PATH, {});
+  const aliases = await loadJson(PATHS.ALIASES_PATH, {});
   if (aliases && typeof aliases === "object" && !Array.isArray(aliases)) {
     session.aliases = aliases;
   }
 
-  if (shouldPersist) persistState();
+  if (shouldPersist) await persistState();
 }
 
-function persistState() {
-  const nextState = loadState();
+async function persistState() {
+  const nextState = await loadState();
   pruneSearchHistory();
   nextState.pageHistory   = session.pageHistory.slice(0, LIMITS.MAX_HISTORY);
   delete nextState.searchHistory;
-  nextState.theme         = currentTheme;
-  saveEncryptedSearchHistory(session.searchHistory);
-  saveState(nextState);
+  nextState.theme         = getTheme();
+  await saveEncryptedSearchHistory(session.searchHistory);
+  await saveState(nextState);
 }
 
 function recordPageVisit(url, title) {
@@ -294,7 +194,7 @@ function recordPageVisit(url, title) {
   session.pageHistory = session.pageHistory.filter(item => item.url !== url);
   session.pageHistory.unshift({ url, title: cleanVisibleText(title || url), at: new Date().toISOString() });
   if (session.pageHistory.length > LIMITS.MAX_HISTORY) session.pageHistory.length = LIMITS.MAX_HISTORY;
-  persistState();
+  persistState().catch(e => logLine(`persist error: ${e.message}`));
 }
 
 function recordSearch(query, url, mode, displayQuery, page, extra = {}) {
@@ -311,104 +211,17 @@ function recordSearch(query, url, mode, displayQuery, page, extra = {}) {
     siteHost: extra.siteHost || null,
   });
   if (session.searchHistory.length > LIMITS.MAX_HISTORY) session.searchHistory.length = LIMITS.MAX_HISTORY;
-  persistState();
+  persistState().catch(e => logLine(`persist error: ${e.message}`));
 }
 
 function applyTheme(name) {
   const key = String(name || "").trim().toLowerCase();
-  if (!THEMES[key]) return false;
-  currentTheme = key;
-  persistState();
+  if (!setTheme(key)) return false;
+  persistState().catch(e => logLine(`persist error: ${e.message}`));
   return true;
 }
 
-// ─── Terminal helpers ─────────────────────────────────────────────────────────
-function termWidth() { return process.stdout.columns || 100; }
 
-function hr(char = "-") {
-  return C.dim + char.repeat(Math.max(40, termWidth())) + C.reset;
-}
-
-function centerPlain(text) {
-  const raw     = cleanVisibleText(String(text || "")).replace(/\u00C2\u00A9/g, "\u00A9");
-  const padding = Math.max(0, Math.floor((termWidth() - raw.length) / 2));
-  return `${" ".repeat(padding)}${raw}`;
-}
-
-function centerOffset(visualWidth) {
-  return Math.max(0, Math.floor((termWidth() - visualWidth) / 2));
-}
-
-function formatHeaderTimestamp(date = new Date()) {
-  const time = new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-  const day = new Intl.DateTimeFormat("en-GB", { day: "2-digit" }).format(date);
-  const month = new Intl.DateTimeFormat("en-GB", { month: "long" }).format(date);
-  const year = new Intl.DateTimeFormat("en-GB", { year: "numeric" }).format(date);
-  return `${time} : ${day}/${month}/${year}`;
-}
-
-function printTitleLine(title, rightText = formatHeaderTimestamp()) {
-  const width = termWidth();
-  const gap = Math.max(1, width - title.length - rightText.length);
-  if (gap <= 1) {
-    console.log(`${C.a}${title}${C.reset}`);
-    return;
-  }
-  console.log(`${C.a}${title}${" ".repeat(gap)}${rightText}${C.reset}`);
-}
-
-function wrap(text, indent = 0) {
-  const width = Math.max(20, termWidth() - indent - 2);
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    if ((line + " " + word).trim().length > width) {
-      if (line) lines.push(line);
-      line = word;
-    } else {
-      line = line ? `${line} ${word}` : word;
-    }
-  }
-  if (line) lines.push(line);
-  const pad = " ".repeat(indent);
-  return lines.map(entry => `${pad}${entry}`).join("\n");
-}
-
-function wrapLines(text, width) {
-  const limit = Math.max(20, Number(width) || 20);
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length > limit) {
-      if (line) lines.push(line);
-      line = word;
-    } else {
-      line = next;
-    }
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [""];
-}
-
-function printAIChatReply(providerLabel, reply, model = "") {
-  const prompt        = "cipherbrowse> ";
-  const providerTag   = `<${providerLabel}>`;
-  const prefixPlain   = `${prompt}${providerTag} `;
-  const continuation  = " ".repeat(prefixPlain.length);
-  const lines         = wrapLines(reply, termWidth() - prefixPlain.length - 1);
-
-  console.log("");
-  console.log(`${C.p}${prompt}${C.reset}${C.a}${providerTag}${C.reset} ${lines[0] || ""}`);
-  lines.slice(1).forEach(line => console.log(`${continuation}${line}`));
-  if (model) console.log(`${C.dim}${continuation}[model: ${model}]${C.reset}`);
-}
 
 // ─── Nav helpers ──────────────────────────────────────────────────────────────
 function navSnapshot() {
@@ -445,65 +258,7 @@ function navApply(snapshot) {
 }
 
 // ─── Network helpers ──────────────────────────────────────────────────────────
-function buildCurlArgs(url) {
-  const args = [
-    "-sL",
-    "--max-time",      String(Math.ceil(LIMITS.FETCH_TIMEOUT / 1000)),
-    "--max-filesize",  "8000000",
-    "-A",              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
-    "-H",              "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "-H",              "Accept-Language: en-US,en;q=0.8",
-    "--compressed",
-  ];
-  if (runtime.proxyMode === "tor" || runtime.proxyMode === "proxy") {
-    args.push("--proxy", runtime.proxyUrl || DEFAULT_TOR);
-  }
-  args.push(url);
-  return args;
-}
 
-function fetchUrl(url) {
-  return new Promise((resolve, reject) => {
-    const child  = spawn(CURL_BIN, buildCurlArgs(url), { timeout: LIMITS.FETCH_TIMEOUT + 5000, windowsHide: true });
-    const chunks = [];
-    const errBuf = [];
-    child.stdout.on("data", d => chunks.push(d));
-    child.stderr.on("data", d => errBuf.push(d));
-    child.on("error", err => reject(new Error(`curl error: ${err.message}`)));
-    child.on("close", code => {
-      if (code !== 0 && chunks.length === 0) {
-        const stderr = Buffer.concat(errBuf).toString("utf8").trim();
-        return reject(new Error(stderr || `curl exited with code ${code}`));
-      }
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-  });
-}
-
-function fetchUrlWithHeaders(url, headers = []) {
-  return new Promise((resolve, reject) => {
-    const args = buildCurlArgs(url);
-    args.splice(args.length - 1, 0, ...headers.flatMap(([n, v]) => ["-H", `${n}: ${v}`]));
-    const child  = spawn(CURL_BIN, args, { timeout: LIMITS.FETCH_TIMEOUT + 5000, windowsHide: true });
-    const chunks = [];
-    const errBuf = [];
-    child.stdout.on("data", d => chunks.push(d));
-    child.stderr.on("data", d => errBuf.push(d));
-    child.on("error", err => reject(new Error(`curl error: ${err.message}`)));
-    child.on("close", code => {
-      if (code !== 0 && chunks.length === 0) {
-        const stderr = Buffer.concat(errBuf).toString("utf8").trim();
-        return reject(new Error(stderr || `curl exited with code ${code}`));
-      }
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-  });
-}
-
-async function fetchJson(url, headers = []) {
-  const raw = headers.length ? await fetchUrlWithHeaders(url, headers) : await fetchUrl(url);
-  return JSON.parse(raw);
-}
 
 // ─── View helpers ─────────────────────────────────────────────────────────────
 function printPageHeader(url, title, statusNote = "") {
@@ -1120,17 +875,17 @@ async function cmdSearches(arg) {
   console.log(`${C.dim}  /searches <n> to re-run${C.reset}`);
 }
 
-function cmdBookmark() {
+async function cmdBookmark() {
   if (!session.currentUrl) { console.log(`${C.yellow}No page loaded.${C.reset}`); return; }
-  const bookmarks = loadJson(PATHS.BOOKMARKS_PATH, []);
+  const bookmarks = await loadJson(PATHS.BOOKMARKS_PATH, []);
   if (bookmarks.some(item => item.url === session.currentUrl)) { console.log(`${C.yellow}Already bookmarked.${C.reset}`); return; }
   bookmarks.unshift({ url: session.currentUrl, title: session.currentTitle || session.currentUrl, at: new Date().toISOString() });
-  saveJson(PATHS.BOOKMARKS_PATH, bookmarks);
+  await saveJson(PATHS.BOOKMARKS_PATH, bookmarks);
   console.log(`${C.p}Bookmarked:${C.reset} ${session.currentTitle || session.currentUrl}`);
 }
 
 async function cmdBookmarks(arg) {
-  const bookmarks = loadJson(PATHS.BOOKMARKS_PATH, []);
+  const bookmarks = await loadJson(PATHS.BOOKMARKS_PATH, []);
   const trimmed   = String(arg || "").trim();
   const openMatch = trimmed.match(/^(?:open\s+)?(\d+)$/i);
   if (openMatch) {
@@ -1146,25 +901,25 @@ async function cmdBookmarks(arg) {
   console.log(`${C.dim}  /bookmarks <n> to open${C.reset}`);
 }
 
-function cmdBookmarkRemove(arg) {
+async function cmdBookmarkRemove(arg) {
   const index     = Number.parseInt(String(arg || "").trim(), 10);
-  const bookmarks = loadJson(PATHS.BOOKMARKS_PATH, []);
+  const bookmarks = await loadJson(PATHS.BOOKMARKS_PATH, []);
   if (!Number.isInteger(index) || index < 1 || index > bookmarks.length) { console.log(`${C.red}Invalid bookmark number.${C.reset}`); return; }
   const removed = bookmarks.splice(index - 1, 1)[0];
-  saveJson(PATHS.BOOKMARKS_PATH, bookmarks);
+  await saveJson(PATHS.BOOKMARKS_PATH, bookmarks);
   console.log(`${C.p}Removed:${C.reset} ${removed.title || removed.url}`);
 }
 
-function cmdNote(text) {
+async function cmdNote(text) {
   if (!text) { console.log(`${C.red}Usage: /note <text>${C.reset}`); return; }
-  const notes = loadJson(PATHS.NOTES_PATH, []);
+  const notes = await loadJson(PATHS.NOTES_PATH, []);
   notes.unshift({ text, url: session.currentUrl, at: new Date().toISOString() });
-  saveJson(PATHS.NOTES_PATH, notes);
+  await saveJson(PATHS.NOTES_PATH, notes);
   console.log(`${C.p}Note saved.${C.reset}`);
 }
 
-function cmdNotes() {
-  const notes = loadJson(PATHS.NOTES_PATH, []);
+async function cmdNotes() {
+  const notes = await loadJson(PATHS.NOTES_PATH, []);
   if (!notes.length) { console.log(`${C.yellow}No notes saved.${C.reset}`); return; }
   console.log(`\n${C.a}Notes${C.reset}`);
   notes.forEach((item, index) => {
@@ -1172,40 +927,40 @@ function cmdNotes() {
   });
 }
 
-function cmdNoteDelete(arg) {
+async function cmdNoteDelete(arg) {
   const parts = String(arg || "").trim().split(/\s+/).filter(Boolean);
   const from  = Number.parseInt(parts[0], 10);
   const to    = Number.parseInt(parts[1], 10) || from;
-  const notes = loadJson(PATHS.NOTES_PATH, []);
+  const notes = await loadJson(PATHS.NOTES_PATH, []);
   if (!Number.isInteger(from) || from < 1 || from > notes.length || to < from) { console.log(`${C.red}Invalid note range.${C.reset}`); return; }
   const removed = notes.splice(from - 1, to - from + 1);
-  saveJson(PATHS.NOTES_PATH, notes);
+  await saveJson(PATHS.NOTES_PATH, notes);
   console.log(`${C.p}Deleted ${removed.length} note(s).${C.reset}`);
 }
 
-function cmdAlert(url) {
+async function cmdAlert(url) {
   const normalizedUrl = normalizeUrlInput(url);
   if (!normalizedUrl) { console.log(`${C.red}Usage: /alert <url>${C.reset}`); return; }
-  const alerts = loadJson(PATHS.ALERTS_PATH, []);
+  const alerts = await loadJson(PATHS.ALERTS_PATH, []);
   if (alerts.some(item => item.url === normalizedUrl)) { console.log(`${C.yellow}Already monitoring.${C.reset}`); return; }
   alerts.unshift({ url: normalizedUrl, at: new Date().toISOString() });
-  saveJson(PATHS.ALERTS_PATH, alerts);
+  await saveJson(PATHS.ALERTS_PATH, alerts);
   console.log(`${C.p}Alert added:${C.reset} ${normalizedUrl}`);
 }
 
-function cmdAlerts() {
-  const alerts = loadJson(PATHS.ALERTS_PATH, []);
+async function cmdAlerts() {
+  const alerts = await loadJson(PATHS.ALERTS_PATH, []);
   if (!alerts.length) { console.log(`${C.yellow}No alerts set.${C.reset}`); return; }
   console.log(`\n${C.a}Monitoring Alerts${C.reset}`);
   alerts.forEach((item, index) => console.log(`  ${C.p}[${index + 1}]${C.reset} ${item.url}`));
 }
 
-function cmdAlertRemove(arg) {
+async function cmdAlertRemove(arg) {
   const index  = Number.parseInt(String(arg || "").trim(), 10);
-  const alerts = loadJson(PATHS.ALERTS_PATH, []);
+  const alerts = await loadJson(PATHS.ALERTS_PATH, []);
   if (!Number.isInteger(index) || index < 1 || index > alerts.length) { console.log(`${C.red}Invalid alert number.${C.reset}`); return; }
   const removed = alerts.splice(index - 1, 1)[0];
-  saveJson(PATHS.ALERTS_PATH, alerts);
+  await saveJson(PATHS.ALERTS_PATH, alerts);
   console.log(`${C.p}Removed alert:${C.reset} ${removed.url}`);
 }
 
@@ -1626,7 +1381,7 @@ function cmdProxy(arg) {
   console.log(`${C.red}Usage: /proxy [url|tor|off]${C.reset}`);
 }
 
-function cmdAlias(arg) {
+async function cmdAlias(arg) {
   const input = String(arg || "").trim();
   if (!input) {
     const names = Object.keys(session.aliases);
@@ -1638,17 +1393,17 @@ function cmdAlias(arg) {
   const match = input.match(/^([a-z0-9_-]+)\s*=\s*([\s\S]+)$/i);
   if (!match) { console.log(`${C.red}Usage: /alias <name>=<command>${C.reset}`); return; }
   session.aliases[match[1]] = match[2].trim();
-  saveJson(PATHS.ALIASES_PATH, session.aliases);
+  await saveJson(PATHS.ALIASES_PATH, session.aliases);
   console.log(`${C.p}Alias saved:${C.reset} /${match[1]} -> ${match[2].trim()}`);
 }
 
 function cmdTheme(arg) {
   if (!arg) {
-    console.log(`${C.p}Current theme:${C.reset} ${currentTheme}`);
+    console.log(`${C.p}Current theme:${C.reset} ${getTheme()}`);
     console.log(`Available: ${Object.keys(THEMES).join(", ")}`);
     return;
   }
-  if (applyTheme(arg)) console.log(`${C.p}Theme set to:${C.reset} ${currentTheme}`);
+  if (applyTheme(arg)) console.log(`${C.p}Theme set to:${C.reset} ${getTheme()}`);
   else                 console.log(`${C.red}Unknown theme. Available: ${Object.keys(THEMES).join(", ")}${C.reset}`);
 }
 
@@ -1692,7 +1447,7 @@ function cmdSysinfo() {
   console.log(`  Platform: ${process.platform} ${process.arch}`);
   console.log(`  Node:     ${process.version}`);
   console.log(`  App:      ${APP_NAME} v${APP_VERSION}`);
-  console.log(`  Theme:    ${currentTheme}`);
+  console.log(`  Theme:    ${getTheme()}`);
   console.log(`  Memory:   RSS ${Math.round(mem.rss / 1024 / 1024)}MB  Heap ${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
 }
 
@@ -1959,18 +1714,18 @@ async function dispatch(rawInput) {
     case "/previous":           await cmdPrev();                    break;
     case "/history":            await cmdHistory(args);             break;
     case "/searches":           await cmdSearches(args);            break;
-    case "/bookmark":           cmdBookmark();                      break;
+    case "/bookmark":           await cmdBookmark();                break;
     case "/bookmarks":          await cmdBookmarks(args);           break;
     case "/bookmark-remove":
-    case "/bookmark-delete":    cmdBookmarkRemove(args);            break;
-    case "/note":               cmdNote(args);                      break;
-    case "/notes":              cmdNotes();                         break;
+    case "/bookmark-delete":    await cmdBookmarkRemove(args);      break;
+    case "/note":               await cmdNote(args);                break;
+    case "/notes":              await cmdNotes();                   break;
     case "/note-delete":
-    case "/note-remove":        cmdNoteDelete(args);                break;
-    case "/alert":              cmdAlert(args);                     break;
-    case "/alerts":             cmdAlerts();                        break;
+    case "/note-remove":        await cmdNoteDelete(args);          break;
+    case "/alert":              await cmdAlert(args);               break;
+    case "/alerts":             await cmdAlerts();                  break;
     case "/alert-remove":
-    case "/alert-delete":       cmdAlertRemove(args);               break;
+    case "/alert-delete":       await cmdAlertRemove(args);         break;
     case "/summarize":
     case "/summary":            cmdSummarize();                     break;
     case "/stats":              cmdStats();                         break;
@@ -2010,7 +1765,7 @@ async function dispatch(rawInput) {
     case "/passgen":            cmdPassgen(args);                   break;
     case "/proxy":              cmdProxy(args);                     break;
     case "/theme":              cmdTheme(args);                     break;
-    case "/alias":              cmdAlias(args);                     break;
+    case "/alias":              await cmdAlias(args);               break;
     case "/doctor":             await cmdDoctor();                  break;
     case "/install-help":
     case "/installhelp":        cmdInstallHelp();                   break;
@@ -2274,7 +2029,7 @@ async function startRepl() {
 }
 
 (async () => {
-  try { ensureDataDir(); loadPersistedState(); } catch {}
+  try { await ensureDataDir(); await loadPersistedState(); } catch {}
   const cliArgs = process.argv.slice(2);
   if (cliArgs.length > 0) {
     const handled = await runOneShot(cliArgs);

@@ -22,22 +22,29 @@ function normalizeSecret(raw, digest = "sha256") {
 }
 
 function createAESCipherStore({ fs, secretFile, ensureDataDir, digest = "sha256" }) {
-  function loadOrCreateSecret() {
+  let cachedSecret = null;
+  async function loadOrCreateSecret() {
+    if (cachedSecret) return cachedSecret;
     try {
-      const existing = fs.readFileSync(secretFile, "utf8");
-      return normalizeSecret(existing, digest);
+      const existing = await fs.promises.readFile(secretFile, "utf8");
+      cachedSecret = normalizeSecret(existing, digest);
+      return cachedSecret;
     } catch {}
 
     const nextSecret = digest === "sha512"
       ? crypto.randomBytes(SECRET_SOURCE_BYTES)
       : crypto.randomBytes(SECRET_KEY_BYTES);
-    ensureDataDir();
-    fs.writeFileSync(secretFile, nextSecret.toString("base64"), "utf8");
-    return normalizeSecret(nextSecret.toString("base64"), digest);
+    if (ensureDataDir) {
+      const res = ensureDataDir();
+      if (res instanceof Promise) await res;
+    }
+    await fs.promises.writeFile(secretFile, nextSecret.toString("base64"), "utf8");
+    cachedSecret = normalizeSecret(nextSecret.toString("base64"), digest);
+    return cachedSecret;
   }
 
-  function encryptText(value) {
-    const key = loadOrCreateSecret();
+  async function encryptText(value) {
+    const key = await loadOrCreateSecret();
     const iv = crypto.randomBytes(IV_BYTES);
     const cipher = crypto.createCipheriv(AES_ALGORITHM, key, iv);
     const ciphertext = Buffer.concat([cipher.update(String(value || ""), "utf8"), cipher.final()]);
@@ -50,8 +57,8 @@ function createAESCipherStore({ fs, secretFile, ensureDataDir, digest = "sha256"
     };
   }
 
-  function decryptText(payload) {
-    const key = loadOrCreateSecret();
+  async function decryptText(payload) {
+    const key = await loadOrCreateSecret();
     const iv = Buffer.from(String(payload?.iv || ""), "base64");
     const tag = Buffer.from(String(payload?.tag || ""), "base64");
     const data = Buffer.from(String(payload?.data || ""), "base64");
