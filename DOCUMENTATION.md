@@ -90,6 +90,7 @@ Known site handlers:
 Notes:
 
 - site-specific APIs are used where they are more reliable than scraping
+- `/s github` allows about 10 unauthenticated searches a minute per IP. Set the `GITHUB_TOKEN` environment variable to a GitHub token to raise that to about 30. Public search needs no token scopes. If GitHub rejects or limits a request, the error message is shown.
 - JavaScript-heavy sites may fall back to search-engine results or video search
 - search-engine domains like `google.com` fall back to normal web search instead of broken internal search pages
 

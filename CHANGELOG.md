@@ -27,6 +27,8 @@ All notable changes to CipherBrowse. Earlier 1.0.x releases are recorded in the 
 - A model that returns HTTP 404 now falls through to the next model for every provider.
 - Requires Node.js 22 or newer. Node 18 and 20 are past end of life. The portable Node in the launcher is now v24.21.0.
 - `/alert` now checks pages. The old version only saved URLs.
+- `npm run verify` retries each live check up to three times. The expectations are unchanged. The CI live job is advisory: it still runs on pushes to `main`, and its failures show without failing the workflow. The unit tests remain the gate.
+- `/s github` uses `GITHUB_TOKEN` when it is set, which raises the search limit. A rejected or rate-limited request now shows GitHub's message instead of an empty result.
 - Duplicate HTTP fetch code merged into one implementation.
 - About 300 lines of unused banner code removed from `src/index.js`.
 - CI runs unit tests and a smoke test on Node 22 and 24. The live `verify` job runs only on pushes to `main`, so upstream site changes do not block pull requests.

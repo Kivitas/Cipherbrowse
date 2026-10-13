@@ -498,11 +498,20 @@ async function doGitHubSearch(query, options = {}) {
 
   let payload;
   try {
-    payload = await fetchJson(apiUrl, [
+    const headers = [
       ["Accept",     "application/vnd.github+json"],
       ["User-Agent", "CipherBrowse"],
-    ]);
+    ];
+    // Unauthenticated search allows about 10 requests a minute per IP, which shared
+    // CI runners exhaust quickly. A token raises that to about 30. Public search needs no scopes.
+    if (process.env.GITHUB_TOKEN) headers.push(["Authorization", `Bearer ${process.env.GITHUB_TOKEN}`]);
+    payload = await fetchJson(apiUrl, headers);
   } catch (error) { console.log(`${C.red}GitHub search error: ${error.message}${C.reset}`); return; }
+
+  // A rate-limited or rejected request returns a JSON error body without items.
+  if (!Array.isArray(payload?.items)) {
+    console.log(`${C.red}GitHub search error: ${payload?.message || "unexpected response"}${C.reset}`);
+  }
 
   const results = Array.isArray(payload?.items)
     ? payload.items.slice(0, 10).map((item, index) => ({

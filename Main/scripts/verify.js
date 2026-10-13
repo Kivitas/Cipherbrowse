@@ -6,6 +6,12 @@ const root = path.resolve(__dirname, "..");
 const entry = path.join(root, "src", "index.js");
 const dataDir = path.join(root, ".cipherbrowse");
 
+// These checks hit live third-party sites. Rate limits, slow responses and
+// consent pages make single attempts unreliable, so a check passes if any
+// attempt passes. The expectations themselves are never relaxed.
+const ATTEMPTS = 3;
+const RETRY_DELAY_MS = 5000;
+
 const oneShotChecks = [
   {
     name: "help",
@@ -74,45 +80,57 @@ const interactiveChecks = [
 
 let failed = false;
 
-function runOneShot(check) {
-  const result = spawnSync(process.execPath, [entry, ...check.args], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 90000,
-  });
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
-  const missing = check.expect.filter(fragment => !output.includes(fragment));
-  if (result.status !== 0 || missing.length) {
-    failed = true;
-    console.error(`\n[FAIL] ${check.name}`);
-    if (result.status !== 0) console.error(`Exit status: ${result.status}`);
-    if (missing.length) console.error(`Missing: ${missing.join(", ")}`);
-    console.error(output.slice(0, 2500));
-  } else {
-    console.log(`[OK] ${check.name}`);
+// Runs attemptOnce until it passes or ATTEMPTS is reached. attemptOnce returns
+// { ok, status, missing, output }. Only the final attempt's output is printed.
+async function runWithRetries(name, attemptOnce, maxOutput) {
+  let last = null;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    last = attemptOnce();
+    if (last.ok) {
+      console.log(attempt === 1 ? `[OK] ${name}` : `[OK] ${name} (passed on attempt ${attempt}/${ATTEMPTS})`);
+      return;
+    }
+    if (attempt < ATTEMPTS) {
+      console.error(`[retry] ${name} attempt ${attempt}/${ATTEMPTS} failed; retrying in ${RETRY_DELAY_MS / 1000}s`);
+      await sleep(RETRY_DELAY_MS);
+    }
   }
+
+  failed = true;
+  console.error(`\n[FAIL] ${name} (failed all ${ATTEMPTS} attempts)`);
+  if (last.status !== 0) console.error(`Exit status: ${last.status}`);
+  if (last.missing.length) console.error(`Missing: ${last.missing.join(", ")}`);
+  console.error(last.output.slice(0, maxOutput));
 }
 
-async function runInteractive(check) {
+function runOneShot(check) {
+  return runWithRetries(check.name, () => {
+    const result = spawnSync(process.execPath, [entry, ...check.args], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 90000,
+    });
+    const output  = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const missing = check.expect.filter(fragment => !output.includes(fragment));
+    return { ok: result.status === 0 && missing.length === 0, status: result.status, missing, output };
+  }, 2500);
+}
+
+function runInteractive(check) {
   const commandText = `${check.steps.map(step => step.input).join("\n")}\n`;
-  const result = spawnSync(process.execPath, [entry], {
-    cwd: root,
-    input: commandText,
-    encoding: "utf8",
-    timeout: 120000,
-  });
-  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
-  const missing = check.expect.filter(fragment => !output.includes(fragment));
-  if (result.status !== 0 || missing.length) {
-    failed = true;
-    console.error(`\n[FAIL] ${check.name}`);
-    if (result.status !== 0) console.error(`Exit status: ${result.status}`);
-    if (missing.length) console.error(`Missing: ${missing.join(", ")}`);
-    console.error(output.slice(0, 4000));
-  } else {
-    console.log(`[OK] ${check.name}`);
-  }
+  return runWithRetries(check.name, () => {
+    const result = spawnSync(process.execPath, [entry], {
+      cwd: root,
+      input: commandText,
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    const output  = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const missing = check.expect.filter(fragment => !output.includes(fragment));
+    return { ok: result.status === 0 && missing.length === 0, status: result.status, missing, output };
+  }, 4000);
 }
 
 function verifyEncryptedSearchHistory() {
@@ -146,7 +164,7 @@ function verifyEncryptedSearchHistory() {
 
 (async () => {
   for (const check of oneShotChecks) {
-    runOneShot(check);
+    await runOneShot(check);
   }
 
   for (const check of interactiveChecks) {

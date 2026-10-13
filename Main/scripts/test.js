@@ -32,7 +32,7 @@ const {
   parseBingWebResults,
   parseWikipediaApiResults,
 } = require("../src/features/page");
-const { parseGridCoordinate, resolveGridSelection } = require("../src/features/media");
+const { parseGridCoordinate, resolveGridSelection, parseBingVideoResults } = require("../src/features/media");
 const { buildSearchRequest, parseSearchFlavor, normalizeSiteTarget } = require("../src/features/search");
 const { formatDuration, isLikelyDirectMediaUrl } = require("../src/features/video");
 const {
@@ -397,6 +397,24 @@ test("search flavor flags and site targets", () => {
   assert.equal(buildSearchRequest("wiki --query world war 2").siteHost, "wikipedia.org");
   assert.equal(normalizeSiteTarget("gh"), "github.com");
   assert.equal(normalizeSiteTarget("https://www.Example.com/path"), "example.com");
+});
+
+test("Bing video cards are read from mmeta, not from exact link markup", () => {
+  // Bing puts aria-label before href and adds classes to the link. Earlier
+  // parser patterns required the old order and matched nothing.
+  const html =
+    '<div id="mc_vtvc_video_1" class="mc_vtvc b_canvas" mmeta="{&quot;murl&quot;:&quot;https://www.youtube.com/watch?v=abc&quot;,&quot;turl&quot;:&quot;https://ts.example/t.jpg&quot;,&quot;t&quot;:&quot;Cake Basics&quot;}">' +
+    '<a aria-label="Cake Basics · Duration: 3:12 · 1K views" class="mc_vtvc_link mc_vtvc_el" href="https://www.bing.com/ck/a?x">x</a></div>' +
+    '<div class="mc_vtvc" mmeta="{&quot;murl&quot;:&quot;https://vimeo.com/123/video&quot;}">' +
+    '<a aria-label="Second · Duration: 1:00" href="https://www.bing.com/ck/a?y">y</a></div>';
+  const items = parseBingVideoResults(html, 12);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].url, "https://www.youtube.com/watch?v=abc");
+  assert.equal(items[0].title, "Cake Basics");
+  assert.equal(items[0].duration, "3:12");
+  assert.equal(items[0].thumb, "https://ts.example/t.jpg");
+  assert.equal(items[1].url, "https://vimeo.com/123/video");
+  assert.equal(items[1].duration, "1:00", "duration must come from this card, not the next one");
 });
 
 test("video helpers format durations and detect direct media", () => {

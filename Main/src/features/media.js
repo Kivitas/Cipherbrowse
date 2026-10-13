@@ -80,45 +80,39 @@ function parseBingImageResults(html, limit = 12) {
 function parseBingVideoResults(html, limit = 12) {
   const results = [];
   const seen = new Set();
-  const patterns = [
-    /<div[^>]*class="[^"]*mc_vtvc[^"]*"[^>]*\bmmeta="([^"]+)"[\s\S]*?<a\b[^>]*class="mc_vtvc_link"[^>]*>[\s\S]*?<div[^>]*\bourl="([^"]+)"[\s\S]*?<img[^>]*alt="([^"]*)"[^>]*src="([^"]+)"[\s\S]*?(?:<div class="mc_bc_rc items">([^<]+)<\/div>)?/gi,
-    /<a\b[^>]*href="([^"]+)"[^>]*aria-label="([^"]+)"[^>]*>[\s\S]*?(?:<div[^>]*class="mc_bc_rc items">([^<]+)<\/div>)?/gi,
-  ];
-
-  for (const re of patterns) {
-    let match;
-    while ((match = re.exec(html)) !== null && results.length < limit) {
-      try {
-        let url = "";
-        let title = "";
-        let thumb = "";
-        let duration = "";
-
-        if (re === patterns[0]) {
-          const meta = JSON.parse(decodeEntities(match[1]));
-          url = meta.murl || decodeEntities(match[2] || "");
-          title = normalizeWhitespace(match[3] || meta.t || "Video");
-          thumb = decodeEntities(match[4] || meta.turl || "");
-          duration = normalizeWhitespace(match[5] || "");
-        } else {
-          url = decodeEntities(match[1] || "");
-          title = normalizeWhitespace(match[2] || "Video");
-          duration = normalizeWhitespace(match[3] || "");
-        }
-
-        if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
-        if (!isLikelyVideoPage(url)) continue;
-        seen.add(url);
-        results.push({
-          kind: "video",
-          title: title || url,
-          url,
-          thumb,
-          duration,
-          source: safeHost(url),
-        });
-      } catch {}
+  // Each video card is a div whose mmeta attribute holds JSON with the real page
+  // URL (murl), title (t) and thumbnail (turl). Bing has changed the classes and
+  // attribute order around the card and its link, so only mmeta is required.
+  const cardRe = /<div\b[^>]*\bclass="[^"]*\bmc_vtvc\b[^"]*"[^>]*\bmmeta="([^"]+)"/gi;
+  let match;
+  while ((match = cardRe.exec(html)) !== null && results.length < limit) {
+    let meta;
+    try {
+      meta = JSON.parse(decodeEntities(match[1]));
+    } catch {
+      continue;
     }
+    const url = String(meta.murl || meta.pgurl || "");
+    if (!/^https?:\/\//i.test(url) || seen.has(url) || !isLikelyVideoPage(url)) continue;
+
+    // Only the text of this card: stop where the next card's mmeta begins.
+    const nextCard = html.indexOf("mmeta=", match.index + match[0].length);
+    const cardEnd  = nextCard === -1 ? match.index + 6000 : Math.min(nextCard, match.index + 6000);
+    const card     = html.slice(match.index, cardEnd);
+    // The link's aria-label reads "<description> from <host> · Duration: 15 seconds · ...".
+    const label    = card.match(/aria-label="([^"]*)"/i)?.[1] || "";
+    const title    = normalizeWhitespace(label.split(" · ")[0] || meta.t || url);
+    const duration = normalizeWhitespace(label.match(/Duration:\s*([^·]+)/i)?.[1] || "");
+
+    seen.add(url);
+    results.push({
+      kind: "video",
+      title: title || url,
+      url,
+      thumb: decodeEntities(String(meta.turl || "")),
+      duration,
+      source: safeHost(url),
+    });
   }
 
   if (!results.length) {

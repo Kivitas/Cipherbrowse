@@ -47,12 +47,14 @@ jobs:
       - name: Smoke test
         run: npm run smoke
 
-  # Runs live searches against third-party sites. Those results change
-  # without warning, so this job only gates pushes to main, never pull requests.
+  # Runs live searches against third-party sites. Their pages and rate limits
+  # change without notice, so this job is advisory: a failure shows in the run
+  # but does not fail the workflow. The unit tests above are the gate.
   live-verify:
-    name: live verify
+    name: live verify (advisory)
     if: github.event_name == 'push'
     needs: test
+    continue-on-error: true
     runs-on: windows-latest
     defaults:
       run:
@@ -71,4 +73,7 @@ jobs:
         run: npm install
 
       - name: Regression verify
+        env:
+          # Lets the GitHub search check use the runner's higher rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run verify
