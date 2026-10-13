@@ -17,7 +17,7 @@ The source repository keeps the runnable app under `Main/`. Windows users can re
 - video search grids with `/s <query> --videos`
 - image opening through `mpv`
 - video playback through `mpv` and optional local `yt-dlp`
-- AI chat using user-supplied keys for Google Gemini, OpenAI, Anthropic Claude, and Meta Llama (via OpenRouter)
+- AI chat with your own keys for Google Gemini, OpenAI, Anthropic Claude, OpenRouter, and Ollama (local, no key)
 - page-change alerts: `/alert <url>` then `/alert check` records a baseline and reports when visible text changes
 - bookmarks, notes, exports, history, and page tools
 - recon utilities like `/headers`, `/dns`, `/wayback`, `/robots`, `/ssl`, `/whois`, `/trace`, `/myip`
@@ -88,10 +88,14 @@ CipherBrowse does not ship paid AI access. Users add their own keys.
 /ai set key --"gemini" -'API_KEY'
 /ai set key --"openai" -'API_KEY'
 /ai set key --"claude" -'API_KEY'
+/ai set key --"openrouter" -'API_KEY'
+/ai set key --"ollama" -'API_KEY'
 /ai delete key --"gemini"
 /aikey show
 /ai --query "Summarize the current page"
 ```
+
+Ollama needs no key. With no other keys stored, CipherBrowse asks a local Ollama server (`OLLAMA_HOST`, default `127.0.0.1:11434`).
 
 Behavior:
 

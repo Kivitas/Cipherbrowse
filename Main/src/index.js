@@ -59,6 +59,8 @@ const {
   isAIRateLimited,
   createAIKeyStore,
   callAIProvider,
+  ollamaBaseUrl,
+  checkOllama,
 } = require("./features/ai");
 
 const {
@@ -1162,7 +1164,9 @@ async function cmdAI(rawArgs) {
 
   let lastAuthError = null;
   for (const [providerId, provider] of Object.entries(AI_PROVIDERS)) {
-    const keys = await aiKeyStore.getKeys(providerId);
+    const storedKeys = await aiKeyStore.getKeys(providerId);
+    // Keyless providers (local Ollama) get one attempt with no key when none is stored.
+    const keys = storedKeys.length ? storedKeys : (provider.keyOptional ? [null] : []);
     if (!keys.length) continue;
 
     for (const key of keys) {
@@ -1172,6 +1176,11 @@ async function cmdAI(rawArgs) {
         printAIChatReply(result.label || provider.label, result.reply, result.model);
         return;
       } catch (error) {
+        if (key === null && error.status === undefined) {
+          // Nothing is listening on the local host. Skip it rather than failing the whole ask.
+          console.log(`${C.dim}${provider.label} is not reachable at ${ollamaBaseUrl()}. Skipping.${C.reset}`);
+          break;
+        }
         if (isAIRateLimited(error)) {
           console.log(`${C.yellow}${provider.label} is rate limited. Trying next key ...${C.reset}`);
           lastAuthError = error;
@@ -1192,14 +1201,16 @@ async function cmdAI(rawArgs) {
   if (lastAuthError && isAIRateLimited(lastAuthError))
     console.log(`${C.red}All configured AI keys are rate limited or out of tokens.${C.reset}`);
   else
-    console.log(`${C.red}No AI provider answered. Use /ai set key --"<provider>" -'<key>' to add keys.${C.reset}`);
+    console.log(`${C.red}No AI provider answered. Add a key with /ai set key --"<provider>" -'<key>', or start a local Ollama server.${C.reset}`);
 }
 
 async function cmdAIKeyShow() {
   console.log(`\n${C.a}AI Key Status${C.reset}`);
   for (const [providerId, provider] of Object.entries(AI_PROVIDERS)) {
     const keys   = await aiKeyStore.getKeys(providerId);
-    const status = keys.length ? `${keys.length} key(s) stored` : "none";
+    const status = keys.length ? `${keys.length} key(s) stored`
+      : provider.keyOptional ? "no key needed (local server)"
+      : "none";
     console.log(`  ${provider.label.padEnd(24)} ${status}`);
   }
   console.log(`${C.dim}Stored keys are encrypted locally with AES-256-GCM.${C.reset}`);
@@ -1548,6 +1559,8 @@ async function cmdDoctor() {
     if ((await aiKeyStore.getKeys(id)).length) { anyKeys = true; break; }
   }
   console.log(`  AI keys   ${anyKeys ? "configured" : "none"}`);
+  const ollama = await checkOllama();
+  console.log(`  Ollama    ${ollama.running ? `running at ${ollama.host} (${ollama.models.length} model(s))` : `not running at ${ollama.host}`}`);
 
   process.stdout.write(`  Network   testing ...`);
   try {

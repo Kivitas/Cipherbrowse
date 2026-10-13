@@ -47,9 +47,10 @@ const FULL_HELP_SECTIONS = [
     title: "AI Chat",
     lines: [
       "/ai --query \"What is DNA?\"        Ask AI using the saved provider keys",
-      "/ai set key --\"gemini\" -'KEY'     Add an API key (gemini / openai / claude / meta)",
+      "/ai set key --\"gemini\" -'KEY'     Add an API key (gemini / openai / claude / openrouter / ollama)",
       "/ai delete key --\"openai\"         Remove all keys for a provider",
       "/aikey show                        Show saved AI key status",
+      "Ollama needs no key: it answers from a local server (OLLAMA_HOST, default 127.0.0.1:11434)",
       "Replies render inline as: cipherbrowse> <provider> response",
     ],
   },

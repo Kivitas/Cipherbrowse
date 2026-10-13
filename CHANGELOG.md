@@ -23,6 +23,8 @@ All notable changes to CipherBrowse. Earlier 1.0.x releases are recorded in the 
 ### Changed
 
 - AI model lists updated. Claude: `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`. OpenAI: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`. Gemini: `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-2.5-flash`. `gemini-2.0-flash` and `gemini-1.5-flash` are retired.
+- The AI provider set is now Gemini, OpenAI, Anthropic (Claude), OpenRouter, and Ollama. The 1.0 `meta` provider is OpenRouter. Keys already stored under `meta` move to `openrouter` automatically, and `meta` and `llama` still resolve as names.
+- A model that returns HTTP 404 now falls through to the next model for every provider.
 - Requires Node.js 22 or newer. Node 18 and 20 are past end of life. The portable Node in the launcher is now v24.21.0.
 - `/alert` now checks pages. The old version only saved URLs.
 - Duplicate HTTP fetch code merged into one implementation.
@@ -32,6 +34,7 @@ All notable changes to CipherBrowse. Earlier 1.0.x releases are recorded in the 
 
 ### Added
 
+- Ollama provider. It runs against a local server with no key, `OLLAMA_HOST` selects another server, and a key is optional for hosted Ollama. `/doctor` reports whether the server is running.
 - `/alert check [n]` monitors pages for visible-text changes. The first check records a baseline. Only SHA-256 fingerprints are stored.
 - `/dns <domain>` lists A, AAAA, CNAME, MX, NS and TXT records using Node's built-in resolver.
 - `/wayback <url>` finds the closest Internet Archive snapshot.

@@ -40,16 +40,40 @@ const AI_PROVIDERS = {
     parseReply: data => data?.content?.[0]?.text || null,
     authHeader: key => ({ "x-api-key": key, "anthropic-version": "2023-06-01" }),
   },
-  meta: {
-    label: "Meta Llama (via OpenRouter)",
+  openrouter: {
+    label: "OpenRouter",
     keyHint: "sk-or-…",
-    models: ["meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.1-8b-instruct:free", "openrouter/auto"],
+    // openrouter/auto picks a model per request; the Llama entries are fixed picks.
+    models: ["openrouter/auto", "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.1-8b-instruct"],
     endpoint: () => "https://openrouter.ai/api/v1/chat/completions",
-    buildBody: (messages, model = "meta-llama/llama-3.3-70b-instruct") => ({ model, messages, max_tokens: 2048 }),
+    buildBody: (messages, model = "openrouter/auto") => ({ model, messages, max_tokens: 2048 }),
     parseReply: data => data?.choices?.[0]?.message?.content || null,
-    authHeader: key => ({ Authorization: `Bearer ${key}`, "HTTP-Referer": "https://github.com/cipherbrowse", "X-Title": "CipherBrowse" }),
+    authHeader: key => ({ Authorization: `Bearer ${key}`, "HTTP-Referer": "https://github.com/Kivitas/Cipherbrowse", "X-Title": "CipherBrowse" }),
+  },
+  // Local Ollama needs no key. A key is sent as a Bearer token only when
+  // OLLAMA_HOST points at a hosted or proxied server that requires one.
+  ollama: {
+    label: "Ollama",
+    keyHint: "optional",
+    keyOptional: true,
+    timeoutMs: 120000,
+    // Only models the server has pulled will answer. Missing ones fall through.
+    models: ["llama3.3", "qwen3", "gemma3"],
+    endpoint: () => `${ollamaBaseUrl()}/api/chat`,
+    buildBody: (messages, model = "llama3.3") => ({ model, messages, stream: false }),
+    parseReply: data => data?.message?.content || null,
+    authHeader: key => (key ? { Authorization: `Bearer ${key}` } : {}),
   },
 };
+
+// Ollama's default listen address. OLLAMA_HOST may be "host:port" with no scheme.
+function ollamaBaseUrl(env = process.env) {
+  const raw = String(env.OLLAMA_HOST || "").trim();
+  if (!raw) return "http://127.0.0.1:11434";
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  // 0.0.0.0 is a listen address, not a destination the client can connect to.
+  return withScheme.replace(/\/+$/, "").replace("://0.0.0.0", "://127.0.0.1");
+}
 
 function legacyDeobfuscateKey(value) {
   const source = Buffer.from(value, "base64");
@@ -67,9 +91,11 @@ function resolveAIProviderId(raw) {
     chatgpt: "openai",
     claude: "claude",
     anthropic: "claude",
-    meta: "meta",
-    llama: "meta",
-    openrouter: "meta",
+    openrouter: "openrouter",
+    // "meta" and "llama" were the 1.0 names for OpenRouter; kept so old commands still work.
+    meta: "openrouter",
+    llama: "openrouter",
+    ollama: "ollama",
   };
   return aliases[input] || (AI_PROVIDERS[input] ? input : null);
 }
@@ -82,7 +108,7 @@ function normalizeAIKeyForProvider(provider, rawKey) {
     gemini: /(AIza[0-9A-Za-z\-_]{20,})/,
     openai: /(sk-[A-Za-z0-9\-_]{20,})/,
     claude: /(sk-ant-[A-Za-z0-9\-_]{20,})/,
-    meta: /(sk-or-[A-Za-z0-9\-_]{20,})/,
+    openrouter: /(sk-or-[A-Za-z0-9\-_]{20,})/,
   };
   return patterns[provider]?.exec(key)?.[1] || key;
 }
@@ -109,6 +135,8 @@ function isAIRateLimited(err) {
 }
 
 function shouldTryNextAIModel(err) {
+  // A 404 from a model endpoint means the model is not there for this key or server.
+  if (err?.status === 404) return true;
   const message = `${err?.message || ""} ${JSON.stringify(err?.apiData?.error || {})}`.toLowerCase();
   return /not[ _-]found|unsupported|not supported|unknown model|invalid model|model.*deprecated|does not exist|not available|no such model|shut ?down|retired/i.test(message);
 }
@@ -117,11 +145,20 @@ function createAIKeyStore({ fs, keyFile, secretFile, ensureDataDir }) {
   const cipherStore = createAESCipherStore({ fs, secretFile, ensureDataDir });
 
   async function loadRaw() {
+    let raw;
     try {
-      return JSON.parse(await fs.promises.readFile(keyFile, "utf8"));
+      raw = JSON.parse(await fs.promises.readFile(keyFile, "utf8"));
     } catch {
       return {};
     }
+    // "meta" was the 1.0 id for OpenRouter. Fold its keys into "openrouter" so
+    // nothing stored before the rename is lost. Persisted on the next write.
+    if (raw && Object.prototype.hasOwnProperty.call(raw, "meta")) {
+      const toList = value => (Array.isArray(value) ? value : value ? [value] : []);
+      raw.openrouter = [...toList(raw.openrouter), ...toList(raw.meta)];
+      delete raw.meta;
+    }
+    return raw;
   }
 
   async function saveRaw(data) {
@@ -203,7 +240,7 @@ async function callAIProvider(providerId, apiKey, prompt, fetchImpl = fetch) {
   for (const model of models) {
     const headers = { "content-type": "application/json", ...(provider.authHeader ? provider.authHeader(apiKey) : {}) };
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const timer = setTimeout(() => controller.abort(), provider.timeoutMs || 30000);
     try {
       const response = await fetchImpl(provider.endpoint(apiKey, model), {
         method: "POST",
@@ -241,6 +278,25 @@ async function callAIProvider(providerId, apiKey, prompt, fetchImpl = fetch) {
   throw lastError || new Error("No provider model succeeded.");
 }
 
+// Asks a local (or configured) Ollama server which models it has. Never throws:
+// a stopped server is a normal state, reported as running: false.
+async function checkOllama(fetchImpl = fetch, timeoutMs = 2000) {
+  const host = ollamaBaseUrl();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${host}/api/tags`, { signal: controller.signal });
+    if (!response.ok) return { running: false, host, models: [] };
+    const data = await response.json();
+    const models = (data?.models || []).map(item => item.name || item.model).filter(Boolean);
+    return { running: true, host, models };
+  } catch {
+    return { running: false, host, models: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 module.exports = {
   AI_PROVIDERS,
   resolveAIProviderId,
@@ -250,4 +306,6 @@ module.exports = {
   shouldTryNextAIModel,
   createAIKeyStore,
   callAIProvider,
+  ollamaBaseUrl,
+  checkOllama,
 };

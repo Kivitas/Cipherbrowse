@@ -14,6 +14,7 @@ const { decodeEntities, cleanVisibleText, escapeHtml } = require("../src/core/te
 const { isHttpUrl, buildCurlArgs } = require("../src/core/network");
 const { normalizeSearchHistory } = require("../src/core/storage");
 const {
+  AI_PROVIDERS,
   resolveAIProviderId,
   normalizeAIKeyForProvider,
   parseAIProviderAndKey,
@@ -21,6 +22,8 @@ const {
   shouldTryNextAIModel,
   createAIKeyStore,
   callAIProvider,
+  ollamaBaseUrl,
+  checkOllama,
 } = require("../src/features/ai");
 const {
   stripHtml,
@@ -198,6 +201,123 @@ test("Every provider has at least one model configured", () => {
   const { AI_PROVIDERS } = require("../src/features/ai");
   for (const [id, provider] of Object.entries(AI_PROVIDERS)) {
     assert.ok(provider.models.length > 0, `${id} has no models`);
+  }
+});
+
+// Runs fn with OLLAMA_HOST set (or unset when value is undefined), then restores it.
+function withOllamaHost(value, fn) {
+  const saved = process.env.OLLAMA_HOST;
+  if (value === undefined) delete process.env.OLLAMA_HOST;
+  else process.env.OLLAMA_HOST = value;
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = saved;
+  }
+}
+
+test("the five supported providers, with the current ids", () => {
+  assert.deepEqual(Object.keys(AI_PROVIDERS), ["gemini", "openai", "claude", "openrouter", "ollama"]);
+  assert.equal(resolveAIProviderId("anthropic"), "claude");
+  assert.equal(resolveAIProviderId("openrouter"), "openrouter");
+  assert.equal(resolveAIProviderId("meta"), "openrouter", "1.0 name must still resolve");
+  assert.equal(resolveAIProviderId("llama"), "openrouter", "1.0 name must still resolve");
+  assert.equal(resolveAIProviderId("ollama"), "ollama");
+  assert.equal(normalizeAIKeyForProvider("openrouter", "sk-or-v1-abcdefghijklmnopqrstuvwxyz"), "sk-or-v1-abcdefghijklmnopqrstuvwxyz");
+});
+
+test("OLLAMA_HOST resolves to a base URL", () => {
+  withOllamaHost(undefined, () => assert.equal(ollamaBaseUrl(), "http://127.0.0.1:11434"));
+  assert.equal(ollamaBaseUrl({ OLLAMA_HOST: "0.0.0.0:11434" }), "http://127.0.0.1:11434");
+  assert.equal(ollamaBaseUrl({ OLLAMA_HOST: "gpu-box:9000" }), "http://gpu-box:9000");
+  assert.equal(ollamaBaseUrl({ OLLAMA_HOST: "https://ollama.example.com/" }), "https://ollama.example.com");
+});
+
+test("Ollama without a key calls the local server and never sends auth", async () => {
+  await withOllamaHost(undefined, async () => {
+    const { fetchImpl, calls } = mockFetch([
+      { status: 200, body: { message: { role: "assistant", content: "local answer" }, done: true } },
+    ]);
+    const result = await callAIProvider("ollama", null, "question", fetchImpl);
+    assert.equal(result.reply, "local answer");
+    assert.equal(calls[0].url, "http://127.0.0.1:11434/api/chat");
+    assert.equal(JSON.parse(calls[0].options.body).stream, false);
+    assert.equal(calls[0].options.headers.Authorization, undefined);
+  });
+});
+
+test("Ollama with a key sends a Bearer token to OLLAMA_HOST", async () => {
+  await withOllamaHost("ollama.example.com:8443", async () => {
+    const { fetchImpl, calls } = mockFetch([
+      { status: 200, body: { message: { content: "hosted answer" } } },
+    ]);
+    await callAIProvider("ollama", "olk-testkey", "question", fetchImpl);
+    assert.equal(calls[0].url, "http://ollama.example.com:8443/api/chat");
+    assert.equal(calls[0].options.headers.Authorization, "Bearer olk-testkey");
+  });
+});
+
+test("an unreachable Ollama server fails without an HTTP status", async () => {
+  await withOllamaHost(undefined, async () => {
+    const unreachable = async () => { throw new TypeError("fetch failed"); };
+    await assert.rejects(
+      callAIProvider("ollama", null, "question", unreachable),
+      error => error.status === undefined,
+    );
+  });
+});
+
+test("checkOllama reads installed models and reports a stopped server", async () => {
+  const running = await checkOllama(async () => ({
+    ok: true,
+    json: async () => ({ models: [{ name: "llama3.3:latest" }, { model: "qwen3:8b" }] }),
+  }));
+  assert.equal(running.running, true);
+  assert.deepEqual(running.models, ["llama3.3:latest", "qwen3:8b"]);
+
+  const stopped = await checkOllama(async () => { throw new TypeError("fetch failed"); });
+  assert.equal(stopped.running, false);
+  assert.deepEqual(stopped.models, []);
+});
+
+test("OpenRouter sends the key and falls through a 404 to the next model", async () => {
+  const { fetchImpl, calls } = mockFetch([
+    { status: 404, body: { error: { message: "No endpoints found for this model" } } },
+    { status: 200, body: { choices: [{ message: { content: "router answer" } }] } },
+  ]);
+  const result = await callAIProvider("openrouter", "sk-or-v1-abcdefghijklmnopqrstuvwxyz", "hi", fetchImpl);
+  assert.equal(result.reply, "router answer");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.headers.Authorization, "Bearer sk-or-v1-abcdefghijklmnopqrstuvwxyz");
+  assert.equal(result.model, "meta-llama/llama-3.3-70b-instruct");
+});
+
+test("shouldTryNextAIModel treats any 404 as a missing model", () => {
+  assert.equal(shouldTryNextAIModel({ status: 404, message: "no route" }), true);
+});
+
+test("keys stored under the 1.0 'meta' id move to 'openrouter'", async () => {
+  const dir = makeTempDir();
+  try {
+    const keyFile = path.join(dir, "aikeys.json");
+    const store = createAIKeyStore({ fs, keyFile, secretFile: path.join(dir, "aikeys.secret"), ensureDataDir: () => {} });
+    const key = "sk-or-v1-abcdefghijklmnopqrstuvwxyz";
+    assert.equal(await store.addKey("openrouter", key), true);
+
+    // Simulate a file written by 1.0, where the same entries sat under "meta".
+    const raw = JSON.parse(fs.readFileSync(keyFile, "utf8"));
+    raw.meta = raw.openrouter;
+    delete raw.openrouter;
+    fs.writeFileSync(keyFile, JSON.stringify(raw), "utf8");
+
+    assert.deepEqual(await store.getKeys("openrouter"), [key]);
+    assert.equal(await store.addKey("openrouter", "sk-or-v1-zyxwvutsrqponmlkjihgfedcba"), true);
+    const saved = JSON.parse(fs.readFileSync(keyFile, "utf8"));
+    assert.equal(saved.meta, undefined, "legacy id should be removed on the next write");
+    assert.equal(saved.openrouter.length, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -228,7 +228,15 @@ Useful commands:
 /ai set key --"gemini" -'API_KEY'
 /ai set key --"openai" -'API_KEY'
 /ai set key --"claude" -'API_KEY'
-/ai set key --"meta" -'API_KEY'
+/ai set key --"openrouter" -'API_KEY'
+```
+
+`anthropic` works as a name for Claude, and `meta` or `llama` work as names for OpenRouter.
+
+Ollama needs no key. CipherBrowse asks a local Ollama server at `http://127.0.0.1:11434`, which is tried last and only when no other provider answers. To use another server, set `OLLAMA_HOST` before starting CipherBrowse, for example `OLLAMA_HOST=gpu-box:11434`. A key is needed only for a hosted or proxied Ollama that requires one:
+
+```text
+/ai set key --"ollama" -'API_KEY'
 ```
 
 ### Delete keys for a provider
@@ -252,7 +260,8 @@ Each provider tries its models in order. A model that is retired or unknown to t
 | Google Gemini | `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-2.5-flash` |
 | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna` |
 | Anthropic Claude | `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5` |
-| Meta Llama (OpenRouter) | `meta-llama/llama-3.3-70b-instruct`, `meta-llama/llama-3.1-8b-instruct:free`, `openrouter/auto` |
+| OpenRouter | `openrouter/auto`, `meta-llama/llama-3.3-70b-instruct`, `meta-llama/llama-3.1-8b-instruct` |
+| Ollama (local, no key) | `llama3.3`, `qwen3`, `gemma3` (models must be pulled on the server first) |
 
 Model IDs live in `Main/src/features/ai.js`. Edit that list to pin a different model.
 
