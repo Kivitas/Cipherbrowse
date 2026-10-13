@@ -3,32 +3,35 @@ const { createAESCipherStore } = require("../core/security");
 const LEGACY_AI_SALT = "cipherbrowse-ai-v1";
 
 const AI_PROVIDERS = {
+  // Model lists are tried in order. A model the key cannot use (retired or not
+  // found) falls through to the next entry; see shouldTryNextAIModel().
   gemini: {
     label: "Google Gemini",
     keyHint: "AIza…",
-    models: ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"],
-    endpoint: (key, model = "gemini-2.0-flash") => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+    models: ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"],
+    // The key travels in a header, not the URL, so it never lands in logs or error text.
+    endpoint: (_key, model = "gemini-3.8-flash") => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     buildBody: messages => ({
       contents: messages.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
     }),
     parseReply: data => data?.candidates?.[0]?.content?.parts?.[0]?.text || null,
-    authHeader: null,
+    authHeader: key => ({ "x-goog-api-key": key }),
   },
   openai: {
     label: "OpenAI ChatGPT",
     keyHint: "sk-…",
-    models: ["gpt-5", "gpt-5-mini", "gpt-4.1-mini", "gpt-4o-mini"],
+    models: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"],
     endpoint: () => "https://api.openai.com/v1/chat/completions",
-    buildBody: (messages, model = "gpt-5-mini") => ({ model, messages, max_completion_tokens: 2048 }),
+    buildBody: (messages, model = "gpt-6-astra") => ({ model, messages, max_completion_tokens: 2048 }),
     parseReply: data => data?.choices?.[0]?.message?.content || null,
     authHeader: key => ({ Authorization: `Bearer ${key}` }),
   },
   claude: {
     label: "Anthropic Claude",
     keyHint: "sk-ant-…",
-    models: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"],
+    models: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"],
     endpoint: () => "https://api.anthropic.com/v1/messages",
-    buildBody: (messages, model = "claude-sonnet-4-20250514") => ({
+    buildBody: (messages, model = "claude-sonnet-5-5") => ({
       model,
       max_tokens: 2048,
       messages: messages.filter(m => m.role !== "system"),
@@ -100,12 +103,14 @@ function parseAIProviderAndKey(raw, mode = "set") {
 
 function isAIRateLimited(err) {
   const message = `${err?.message || ""} ${JSON.stringify(err?.apiData?.error || {})}`.toLowerCase();
-  return err?.status === 429 || /rate limit|quota|resource exhausted|too many requests|insufficient_quota|tokens/i.test(message);
+  // Bare "tokens" is deliberately not matched: "max_tokens is too large" is a
+  // request error, not an exhausted key, and should not be retried on other keys.
+  return err?.status === 429 || /rate limit|quota|resource exhausted|too many requests|insufficient_quota|out of tokens|tokens exhausted/i.test(message);
 }
 
 function shouldTryNextAIModel(err) {
   const message = `${err?.message || ""} ${JSON.stringify(err?.apiData?.error || {})}`.toLowerCase();
-  return /not found|unsupported|not supported|unknown model|invalid model|model.*deprecated|does not exist|not available|no such model/i.test(message);
+  return /not[ _-]found|unsupported|not supported|unknown model|invalid model|model.*deprecated|does not exist|not available|no such model|shut ?down|retired/i.test(message);
 }
 
 function createAIKeyStore({ fs, keyFile, secretFile, ensureDataDir }) {

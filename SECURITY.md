@@ -4,7 +4,9 @@
 
 Current supported line:
 
-- `1.0.x`
+- `1.1.x`
+
+Older `1.0.x` builds receive no fixes. Upgrade to `1.1.0` or later.
 
 ## Reporting a Vulnerability
 
@@ -28,6 +30,10 @@ Security-sensitive areas include:
 ## Notes
 
 - AI keys are stored locally with `AES-256-GCM`
+- Gemini keys are sent in the `x-goog-api-key` header, never in the request URL
 - search history is encrypted with `AES-256-GCM` using a SHA-512-derived local key
 - search history is retained for at most `24 hours`
+- `/alert` stores only a SHA-256 fingerprint of each page's visible text, never the page itself
+- only `http(s)` targets are passed to `curl`, and `mpv` receives only `http(s)` URLs or existing local files, so user input cannot inject command-line options
+- HTML exports escape page text and titles
 - runtime state is local and should not be committed to Git

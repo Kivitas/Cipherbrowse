@@ -1,6 +1,6 @@
 {
   "name": "cipherbrowse",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Terminal browser with site search, media search, AI queries, playback, exports, and recon utilities.",
   "main": "src/index.js",
   "type": "commonjs",
@@ -21,10 +21,10 @@
     "check":  "node -c ./src/index.js",
     "test":   "node --test scripts/test.js",
     "verify": "node ./scripts/verify.js",
-    "pkg:win": "pkg src/index.js --targets node18-win-x64 --output dist/Cipherbrowse.exe"
+    "pkg:win": "pkg src/index.js --targets node22-win-x64 --output dist/Cipherbrowse.exe"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "keywords": [
     "cli", "browser", "privacy", "terminal",

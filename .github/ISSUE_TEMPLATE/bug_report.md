@@ -24,7 +24,8 @@ What should CipherBrowse have shown or done?
 
 - OS:
 - Shell:
-- CipherBrowse version:
+- Node.js version (`node -v`):
+- CipherBrowse version (`/sysinfo` or `cbrowse --version`):
 
 ## Notes
 

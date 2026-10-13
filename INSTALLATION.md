@@ -30,7 +30,7 @@ Cipherbrowse/
 
 - Windows 10 or newer
 - PowerShell or CMD
-- Node.js 18 or newer, or internet access so the launcher can download portable Node.js automatically
+- Node.js 22 or newer, or internet access so the launcher can download portable Node.js automatically
 - `mpv.exe` for image and video playback
 - `yt-dlp.exe` for better video extraction
 
@@ -73,11 +73,11 @@ if exist "%NODE_CMD%" goto :RUN
 
 :: 4. If Node is not found, attempt to download it automatically
 echo =====================================================================
-echo Node.js is required to run CipherBrowse v1.0.1, but was not found.
+echo Node.js is required to run CipherBrowse v1.1.0, but was not found.
 echo =====================================================================
 echo.
 echo We will automatically download a portable, lightweight Node.js
-echo binary (v18.20.3, ~30MB) so you can run the app without installing
+echo binary (v24.21.0) so you can run the app without installing
 echo anything globally.
 echo.
 
@@ -93,7 +93,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo Downloading Node.js... Please wait.
 mkdir "%LOCAL_NODE_DIR%" >nul 2>nul
-curl -L -o "%LOCAL_NODE_DIR%\node.exe" "https://nodejs.org/dist/v18.20.3/win-x64/node.exe"
+curl -L -o "%LOCAL_NODE_DIR%\node.exe" "https://nodejs.org/dist/v24.21.0/win-x64/node.exe"
 
 if %ERRORLEVEL% equ 0 (
   set "NODE_CMD=%LOCAL_NODE_DIR%\node.exe"
@@ -103,7 +103,7 @@ if %ERRORLEVEL% equ 0 (
 echo.
 echo Retrying download to local project directory...
 mkdir "%PROJECT_NODE_DIR%" >nul 2>nul
-curl -L -o "%PROJECT_NODE_DIR%\node.exe" "https://nodejs.org/dist/v18.20.3/win-x64/node.exe"
+curl -L -o "%PROJECT_NODE_DIR%\node.exe" "https://nodejs.org/dist/v24.21.0/win-x64/node.exe"
 
 if %ERRORLEVEL% neq 0 (
   echo.
@@ -138,7 +138,7 @@ if not exist "%ENTRY%" (
 :: If Node exited with an error, pause so the user can read the error trace
 if %ERRORLEVEL% neq 0 (
   echo.
-  echo [CipherBrowse v1.0.1 exited with error code %ERRORLEVEL%]
+  echo [CipherBrowse v1.1.0 exited with error code %ERRORLEVEL%]
   echo.
   rem Detect if launched from Windows Explorer [double-clicked]
   echo %cmdcmdline% | findstr /i /c:"/c" >nul

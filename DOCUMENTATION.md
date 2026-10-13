@@ -1,6 +1,6 @@
 # CipherBrowse Documentation
 
-This is the full command and usage reference for `CipherBrowse 1.0.1`.
+This is the full command and usage reference for `CipherBrowse 1.1.0`. Requires Node.js 22 or newer.
 
 ## 1. Launching
 
@@ -184,9 +184,20 @@ Notes:
 
 ```text
 /alert https://example.com
+/alert check
+/alert check 2
 /alerts
 /alert-remove 1
 ```
+
+Behavior:
+
+- `/alert <url>` saves a page to watch. It does not fetch the page yet.
+- `/alert check` fetches every alert, or one alert when a number is given, and compares a fingerprint of the page's visible text with the last one saved.
+- the first check records a baseline. Later checks print `CHANGED` when the text differs and `no change` when it does not.
+- markup-only edits (scripts, class names, tracking parameters) do not count as changes.
+- only the SHA-256 fingerprint is stored, never the page content.
+- pages whose visible text changes on every load, such as timestamps or rotating ads, will report as changed each time.
 
 ## 6. Reading Pages
 
@@ -231,6 +242,19 @@ Useful commands:
 ```text
 /aikey show
 ```
+
+### Models
+
+Each provider tries its models in order. A model that is retired or unknown to the key falls through to the next one.
+
+| Provider | Models tried, in order |
+| --- | --- |
+| Google Gemini | `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-2.5-flash` |
+| OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna` |
+| Anthropic Claude | `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5` |
+| Meta Llama (OpenRouter) | `meta-llama/llama-3.3-70b-instruct`, `meta-llama/llama-3.1-8b-instruct:free`, `openrouter/auto` |
+
+Model IDs live in `Main/src/features/ai.js`. Edit that list to pin a different model.
 
 ### Ask AI
 
@@ -320,11 +344,19 @@ Main/.cipherbrowse/exports/
 /myip
 /ipinfo 8.8.8.8
 /trace
+/dns example.com
+/wayback https://example.com
 /scan https://example.com
 /extract https://example.com
 /crawl https://example.com
 /rss https://example.com/feed.xml
 ```
+
+Notes:
+
+- `/dns` uses Node's built-in resolver and lists A, AAAA, CNAME, MX, NS and TXT records. It needs no extra tools.
+- `/wayback` asks the Internet Archive for the closest saved snapshot of a URL. A URL with no snapshot prints `No archived snapshot found.`
+- `/headers`, `/scan` and `/wayback` accept only `http(s)` URLs.
 
 ## 11. Utility Commands
 
@@ -397,9 +429,12 @@ Run:
 ```powershell
 cd .\Main
 npm run check
+npm test
 npm run smoke
 npm run verify
 ```
+
+`npm test` runs offline unit tests for parsing, AI request building, key storage, and encryption. `npm run verify` runs live searches against third-party sites.
 
 ## 16. Repository Hygiene
 

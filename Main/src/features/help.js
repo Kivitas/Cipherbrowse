@@ -81,13 +81,16 @@ const FULL_HELP_SECTIONS = [
   {
     title: "Monitoring",
     lines: [
-      "/alert <url>  /alerts  /alert-remove <n>",
+      "/alert <url>  /alert check [n]  /alerts  /alert-remove <n>",
+      "Checks hash the visible page text; the first check records a baseline.",
     ],
   },
   {
     title: "Recon",
     lines: [
       "/whois  /ping  /headers  /robots  /scan  /extract  /trace  /ssl  /myip  /ipinfo",
+      "/dns [domain]               A, AAAA, CNAME, MX, NS, TXT records",
+      "/wayback [url]              Closest Internet Archive snapshot",
     ],
   },
   {
@@ -155,6 +158,8 @@ const ALL_COMMANDS = [
   "/scan",
   "/extract",
   "/trace",
+  "/dns",
+  "/wayback",
   "/ssl",
   "/myip",
   "/ipinfo",

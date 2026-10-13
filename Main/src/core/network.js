@@ -3,7 +3,14 @@
 const { spawn } = require("child_process");
 const { LIMITS, CURL_BIN, DEFAULT_TOR, runtime } = require("./config");
 
+// Only http(s) targets reach curl. Without this check, a string such as
+// "--output C:\\x" typed into a recon command would be parsed as a curl option.
+function isHttpUrl(value) {
+  return /^https?:\/\/[^\s]+$/i.test(String(value || ""));
+}
+
 function buildCurlArgs(url) {
+  if (!isHttpUrl(url)) throw new Error(`Refusing non-http(s) target: ${String(url).slice(0, 80)}`);
   const args = [
     "-sL",
     "--max-time",      String(Math.ceil(LIMITS.FETCH_TIMEOUT / 1000)),
@@ -20,27 +27,14 @@ function buildCurlArgs(url) {
   return args;
 }
 
-function fetchUrl(url) {
-  return new Promise((resolve, reject) => {
-    const child  = spawn(CURL_BIN, buildCurlArgs(url), { timeout: LIMITS.FETCH_TIMEOUT + 5000, windowsHide: true });
-    const chunks = [];
-    const errBuf = [];
-    child.stdout.on("data", d => chunks.push(d));
-    child.stderr.on("data", d => errBuf.push(d));
-    child.on("error", err => reject(new Error(`curl error: ${err.message}`)));
-    child.on("close", code => {
-      if (code !== 0 && chunks.length === 0) {
-        const stderr = Buffer.concat(errBuf).toString("utf8").trim();
-        return reject(new Error(stderr || `curl exited with code ${code}`));
-      }
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-  });
-}
-
 function fetchUrlWithHeaders(url, headers = []) {
   return new Promise((resolve, reject) => {
-    const args = buildCurlArgs(url);
+    let args;
+    try {
+      args = buildCurlArgs(url);
+    } catch (error) {
+      return reject(error);
+    }
     args.splice(args.length - 1, 0, ...headers.flatMap(([n, v]) => ["-H", `${n}: ${v}`]));
     const child  = spawn(CURL_BIN, args, { timeout: LIMITS.FETCH_TIMEOUT + 5000, windowsHide: true });
     const chunks = [];
@@ -58,12 +52,16 @@ function fetchUrlWithHeaders(url, headers = []) {
   });
 }
 
+function fetchUrl(url) {
+  return fetchUrlWithHeaders(url, []);
+}
+
 async function fetchJson(url, headers = []) {
-  const raw = headers.length ? await fetchUrlWithHeaders(url, headers) : await fetchUrl(url);
-  return JSON.parse(raw);
+  return JSON.parse(await fetchUrlWithHeaders(url, headers));
 }
 
 module.exports = {
+  isHttpUrl,
   buildCurlArgs,
   fetchUrl,
   fetchUrlWithHeaders,

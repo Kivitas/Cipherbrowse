@@ -1,12 +1,12 @@
 # CipherBrowse
 
-CipherBrowse is a terminal browser and search toolkit built for plain CMD / PowerShell use. It combines text-page browsing, site-aware search, image and video search grids, mpv playback, AI prompts with user-supplied API keys, exports, bookmarks, notes, and recon-style utilities in one CLI.
+CipherBrowse is a terminal browser and search toolkit built for plain CMD / PowerShell use. It combines text-page browsing, site-aware search, image and video search grids, mpv playback, AI prompts with user-supplied API keys, page-change alerts, exports, bookmarks, notes, and recon-style utilities in one CLI.
 
 The source repository keeps the runnable app under `Main/`. Windows users can rebuild the optional top-level `Cipherbrowse.cmd` launcher locally with [INSTALLATION.md](./INSTALLATION.md) when GitHub or organization policy blocks unsigned command files.
 
 ## Version
 
-`1.0.1`
+`1.1.0` — see [CHANGELOG.md](./CHANGELOG.md) for what changed.
 
 ## Features
 
@@ -17,9 +17,10 @@ The source repository keeps the runnable app under `Main/`. Windows users can re
 - video search grids with `/s <query> --videos`
 - image opening through `mpv`
 - video playback through `mpv` and optional local `yt-dlp`
-- AI chat using user-supplied API keys
-- bookmarks, notes, alerts, exports, history, and page tools
-- recon utilities like `/headers`, `/robots`, `/ssl`, `/whois`, `/trace`, `/myip`
+- AI chat using user-supplied keys for Google Gemini, OpenAI, Anthropic Claude, and Meta Llama (via OpenRouter)
+- page-change alerts: `/alert <url>` then `/alert check` records a baseline and reports when visible text changes
+- bookmarks, notes, exports, history, and page tools
+- recon utilities like `/headers`, `/dns`, `/wayback`, `/robots`, `/ssl`, `/whois`, `/trace`, `/myip`
 
 ## Launch
 
@@ -40,7 +41,7 @@ npm start
 
 Requirements:
 
-- Node.js `18+`
+- Node.js `22+` (CI tests Node 22 and 24)
 - Windows
 - optional local media tools under `Main/tools/win32-x64/`
 
@@ -74,6 +75,8 @@ example.com
 /open 2,1
 /img 1,1
 /play 1,1
+/alert https://example.com
+/alert check
 /doctor
 ```
 
@@ -84,6 +87,7 @@ CipherBrowse does not ship paid AI access. Users add their own keys.
 ```text
 /ai set key --"gemini" -'API_KEY'
 /ai set key --"openai" -'API_KEY'
+/ai set key --"claude" -'API_KEY'
 /ai delete key --"gemini"
 /aikey show
 /ai --query "Summarize the current page"
@@ -92,20 +96,23 @@ CipherBrowse does not ship paid AI access. Users add their own keys.
 Behavior:
 
 - multiple keys can be stored per provider
+- models are tried in order; a model the key cannot use (retired or not found) falls through to the next one
 - if one key is rate-limited or exhausted, CipherBrowse tries the next key
 - if all configured keys fail, the CLI reports that clearly
 - successful replies render inline in terminal chat form: `cipherbrowse> <provider> response`
 - stored AI keys are encrypted locally with `AES-256-GCM`
+- Gemini keys are sent in a request header, not in the URL
 
 ## Screenshots
 
-Example captures are stored in [screenshots](./screenshots).
+Example captures are stored in [screenshots](./screenshots). They show the 1.0 interface.
 
 ## Repository Layout
 
 ```text
 Cipherbrowse/
   README.md
+  CHANGELOG.md
   INSTALLATION.md
   DOCUMENTATION.md
   CONTRIBUTING.md
@@ -121,6 +128,7 @@ Cipherbrowse/
     src/
       core/
       features/
+      ui/
       index.js
     tools/
 ```
@@ -132,9 +140,12 @@ Useful commands:
 ```powershell
 cd .\Main
 npm run check
+npm test
 npm run smoke
 npm run verify
 ```
+
+`npm test` runs offline unit tests. `npm run verify` runs live searches against third-party sites, so an upstream change can fail it.
 
 ## Limitations
 
@@ -142,6 +153,7 @@ npm run verify
 - some search engines and sites still vary by region and anti-bot rules
 - video playback needs `mpv`; install it locally or place `mpv.exe` under `Main/tools/win32-x64/`
 - some video sites may still need browser cookies or upstream extractor support
+- `/alert` detects changes in the page's visible text; pages that change on every load (timestamps, ads, rotating content) will report as changed
 
 ## Local Data
 
@@ -152,6 +164,7 @@ npm run verify
 - search history encryption uses `AES-256-GCM` with a SHA-512-derived local key
 - the search-history secret is stored in `search-history.secret`
 - search history expires automatically after `24 hours`
+- alerts store only a SHA-256 fingerprint of each page's visible text, never the page itself
 
 ## License
 
@@ -165,6 +178,7 @@ This project is licensed under `GNU AGPL v3.0`.
 ## Repository Files
 
 - [DOCUMENTATION.md](./DOCUMENTATION.md) for full command usage
+- [CHANGELOG.md](./CHANGELOG.md) for release history
 - [INSTALLATION.md](./INSTALLATION.md) for rebuilding the local Windows launcher and media tools
 - [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow
 - [SECURITY.md](./SECURITY.md) for reporting and security scope

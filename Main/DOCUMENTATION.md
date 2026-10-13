@@ -11,9 +11,12 @@ This file is kept short so the npm package still ships a documentation entry ins
 ```powershell
 npm start
 npm run check
+npm test
 npm run smoke
 npm run verify
 ```
+
+`npm test` runs offline unit tests with `node --test`. `npm run verify` runs live checks and needs internet access.
 
 ## Entrypoint
 

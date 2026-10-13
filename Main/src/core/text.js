@@ -75,8 +75,20 @@ function cleanVisibleText(text) {
     .trim();
 }
 
+// Page text is decoded after tag stripping, so it can contain literal "<".
+// Anything written into an HTML export must be escaped first.
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 module.exports = {
   decodeEntities,
   repairMojibake,
   cleanVisibleText,
+  escapeHtml,
 };

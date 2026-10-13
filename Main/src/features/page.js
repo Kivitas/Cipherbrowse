@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const { cleanVisibleText, decodeEntities } = require("../core/text");
 
 function stripHtml(html) {
@@ -22,6 +23,13 @@ function stripHtml(html) {
       .replace(/\n{3,}/g, "\n\n")
       .trim(),
   );
+}
+
+// Fingerprint of the visible text only, so markup churn (scripts, tracking
+// ids, cache-busting query strings) does not count as a page change.
+// Only the hash is stored, never the page content.
+function fingerprintPage(html) {
+  return crypto.createHash("sha256").update(cleanVisibleText(stripHtml(html))).digest("hex");
 }
 
 function extractTitle(html) {
@@ -181,6 +189,7 @@ function parseWikipediaApiResults(payload, limit = 10) {
 
 module.exports = {
   stripHtml,
+  fingerprintPage,
   extractTitle,
   extractMetaDescription,
   extractLinks,

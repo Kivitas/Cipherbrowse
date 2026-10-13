@@ -21,8 +21,8 @@ const {
   runtime,
 } = require("./core/config");
 
-const { cleanVisibleText, decodeEntities } = require("./core/text");
-const { fetchUrl, fetchUrlWithHeaders, fetchJson } = require("./core/network");
+const { cleanVisibleText, decodeEntities, escapeHtml } = require("./core/text");
+const { isHttpUrl, fetchUrl, fetchJson } = require("./core/network");
 const {
   ensureDataDir,
   loadState,
@@ -91,6 +91,7 @@ const {
   parseBingWebResults,
   parseWikipediaApiResults,
   decodeBingWrappedUrl,
+  fingerprintPage,
 } = require("./features/page");
 
 const {
@@ -100,6 +101,12 @@ const {
   resolvePlayableUrl,
   isLikelyDirectMediaUrl,
 } = require("./features/video");
+
+const {
+  buildWaybackUrl,
+  parseWaybackAvailable,
+  resolveDnsRecords,
+} = require("./features/recon");
 
 const { createSHA512AESCipherStore } = require("./core/security");
 
@@ -938,21 +945,81 @@ async function cmdNoteDelete(arg) {
   console.log(`${C.p}Deleted ${removed.length} note(s).${C.reset}`);
 }
 
-async function cmdAlert(url) {
-  const normalizedUrl = normalizeUrlInput(url);
-  if (!normalizedUrl) { console.log(`${C.red}Usage: /alert <url>${C.reset}`); return; }
+function formatAlertTime(iso) {
+  return String(iso || "").slice(0, 16).replace("T", " ") + " UTC";
+}
+
+function describeAlertStatus(item) {
+  if (!item.checkedAt) return "not checked yet";
+  if (item.changedAt)  return `changed ${formatAlertTime(item.changedAt)}`;
+  return `no change (checked ${formatAlertTime(item.checkedAt)})`;
+}
+
+async function cmdAlert(arg) {
+  const input = String(arg || "").trim();
+  if (/^check(\s|$)/i.test(input)) {
+    await cmdAlertCheck(input.replace(/^check\s*/i, ""));
+    return;
+  }
+
+  const normalizedUrl = normalizeUrlInput(input);
+  if (!normalizedUrl || !isHttpUrl(normalizedUrl)) { console.log(`${C.red}Usage: /alert <url>  or  /alert check [n]${C.reset}`); return; }
   const alerts = await loadJson(PATHS.ALERTS_PATH, []);
   if (alerts.some(item => item.url === normalizedUrl)) { console.log(`${C.yellow}Already monitoring.${C.reset}`); return; }
-  alerts.unshift({ url: normalizedUrl, at: new Date().toISOString() });
+  alerts.unshift({ url: normalizedUrl, at: new Date().toISOString(), hash: null, checkedAt: null, changedAt: null });
   await saveJson(PATHS.ALERTS_PATH, alerts);
   console.log(`${C.p}Alert added:${C.reset} ${normalizedUrl}`);
+  console.log(`${C.dim}Run /alert check to record a baseline.${C.reset}`);
+}
+
+// Stores a SHA-256 of each page's visible text, never the page itself. The first
+// check records a baseline; later checks report CHANGED when the hash differs.
+async function cmdAlertCheck(arg) {
+  const alerts = await loadJson(PATHS.ALERTS_PATH, []);
+  if (!alerts.length) { console.log(`${C.yellow}No alerts set.${C.reset}`); return; }
+
+  const requested = Number.parseInt(String(arg || "").trim(), 10);
+  if (String(arg || "").trim() && (!Number.isInteger(requested) || requested < 1 || requested > alerts.length)) {
+    console.log(`${C.red}Invalid alert number.${C.reset}`);
+    return;
+  }
+  const indexes = Number.isInteger(requested) ? [requested - 1] : alerts.map((_, index) => index);
+  const now     = new Date().toISOString();
+
+  console.log(`${C.dim}Checking ${indexes.length} alert(s) ...${C.reset}`);
+  for (const index of indexes) {
+    const item = alerts[index];
+    try {
+      const hash = fingerprintPage(await fetchUrl(item.url));
+      if (!item.hash) {
+        item.hash      = hash;
+        item.checkedAt = now;
+        console.log(`  ${C.p}[${index + 1}]${C.reset} baseline recorded  ${item.url}`);
+      } else if (item.hash !== hash) {
+        item.hash      = hash;
+        item.checkedAt = now;
+        item.changedAt = now;
+        console.log(`  ${C.yellow}[${index + 1}] CHANGED${C.reset}  ${item.url}`);
+      } else {
+        item.checkedAt = now;
+        console.log(`  ${C.p}[${index + 1}]${C.reset} no change  ${item.url}`);
+      }
+    } catch (error) {
+      console.log(`  ${C.red}[${index + 1}] error: ${error.message}${C.reset}`);
+    }
+  }
+  await saveJson(PATHS.ALERTS_PATH, alerts);
 }
 
 async function cmdAlerts() {
   const alerts = await loadJson(PATHS.ALERTS_PATH, []);
   if (!alerts.length) { console.log(`${C.yellow}No alerts set.${C.reset}`); return; }
   console.log(`\n${C.a}Monitoring Alerts${C.reset}`);
-  alerts.forEach((item, index) => console.log(`  ${C.p}[${index + 1}]${C.reset} ${item.url}`));
+  alerts.forEach((item, index) => {
+    console.log(`  ${C.p}[${index + 1}]${C.reset} ${item.url}`);
+    console.log(`      ${C.dim}${describeAlertStatus(item)}${C.reset}`);
+  });
+  console.log(`${C.dim}  /alert check [n] to re-check${C.reset}`);
 }
 
 async function cmdAlertRemove(arg) {
@@ -1013,13 +1080,14 @@ function cmdFind(text) {
   if (lines.length > 30) console.log(`${C.dim}  ... ${lines.length - 30} more matches${C.reset}`);
 }
 
-function cmdExport(formatArg) {
+async function cmdExport(formatArg) {
   if (!session.currentUrl) { console.log(`${C.yellow}No page loaded.${C.reset}`); return; }
   const requested = (formatArg || "md").toLowerCase();
   const formats   = requested === "all" ? ["md", "html", "json"] : [requested];
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const safeName  = (session.currentTitle || "page").replace(/[^a-z0-9]+/gi, "_").slice(0, 40);
   const written   = [];
+  await ensureDataDir();
 
   for (const format of formats) {
     const filePath = path.join(PATHS.EXPORTS_DIR, `${safeName}_${timestamp}.${format}`);
@@ -1027,15 +1095,17 @@ function cmdExport(formatArg) {
     if (format === "md") {
       content = `# ${session.currentTitle}\n\nURL: ${session.currentUrl}\n\n${session.currentText || ""}\n`;
     } else if (format === "html") {
-      content = `<!doctype html><html><head><meta charset="utf-8"><title>${session.currentTitle}</title></head><body><h1>${session.currentTitle}</h1><p>${(session.currentText || "").replace(/\n/g, "<br>")}</p></body></html>`;
+      // Page text can contain literal markup after entity decoding, so escape everything.
+      const title = escapeHtml(session.currentTitle || "");
+      const body  = escapeHtml(session.currentText || "").replace(/\n/g, "<br>");
+      content = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1><p>${body}</p></body></html>`;
     } else if (format === "json") {
       content = JSON.stringify({ url: session.currentUrl, title: session.currentTitle, text: session.currentText, links: session.currentLinks, images: session.currentImages }, null, 2);
     } else {
       console.log(`${C.red}Unknown export format: ${format}${C.reset}`);
       continue;
     }
-    ensureDataDir();
-    fs.writeFileSync(filePath, content, "utf8");
+    await fs.promises.writeFile(filePath, content, "utf8");
     written.push(filePath);
   }
 
@@ -1067,7 +1137,7 @@ async function cmdAI(rawArgs) {
       console.log(`${C.red}Usage: /ai set key --"<provider>" -'<key>'${C.reset}`);
       return;
     }
-    const added = aiKeyStore.addKey(parsed.provider, parsed.key);
+    const added = await aiKeyStore.addKey(parsed.provider, parsed.key);
     if (added) console.log(`${C.p}Added key for ${AI_PROVIDERS[parsed.provider].label}.${C.reset}`);
     else        console.log(`${C.yellow}That key is already stored.${C.reset}`);
     return;
@@ -1076,7 +1146,7 @@ async function cmdAI(rawArgs) {
   if (/^delete\s+key\b/i.test(text)) {
     const parsed = parseAIProviderAndKey(text, "delete");
     if (!parsed || !parsed.provider) { console.log(`${C.red}Usage: /ai delete key --"<provider>"${C.reset}`); return; }
-    aiKeyStore.clearKeys(parsed.provider);
+    await aiKeyStore.clearKeys(parsed.provider);
     console.log(`${C.p}Deleted saved keys for ${AI_PROVIDERS[parsed.provider].label}.${C.reset}`);
     return;
   }
@@ -1092,7 +1162,7 @@ async function cmdAI(rawArgs) {
 
   let lastAuthError = null;
   for (const [providerId, provider] of Object.entries(AI_PROVIDERS)) {
-    const keys = aiKeyStore.getKeys(providerId);
+    const keys = await aiKeyStore.getKeys(providerId);
     if (!keys.length) continue;
 
     for (const key of keys) {
@@ -1119,16 +1189,16 @@ async function cmdAI(rawArgs) {
     }
   }
 
-  if (lastAuthError && /rate limit|quota|tokens|resource exhausted|too many requests/i.test(String(lastAuthError.message || "")))
+  if (lastAuthError && isAIRateLimited(lastAuthError))
     console.log(`${C.red}All configured AI keys are rate limited or out of tokens.${C.reset}`);
   else
     console.log(`${C.red}No AI provider answered. Use /ai set key --"<provider>" -'<key>' to add keys.${C.reset}`);
 }
 
-function cmdAIKeyShow() {
+async function cmdAIKeyShow() {
   console.log(`\n${C.a}AI Key Status${C.reset}`);
   for (const [providerId, provider] of Object.entries(AI_PROVIDERS)) {
-    const keys   = aiKeyStore.getKeys(providerId);
+    const keys   = await aiKeyStore.getKeys(providerId);
     const status = keys.length ? `${keys.length} key(s) stored` : "none";
     console.log(`  ${provider.label.padEnd(24)} ${status}`);
   }
@@ -1136,14 +1206,27 @@ function cmdAIKeyShow() {
 }
 
 // ─── Playback ─────────────────────────────────────────────────────────────────
+// mpv treats a leading "--" argument as an option (for example --script=...),
+// so only http(s) URLs or existing local files are handed to it.
+function resolveMediaTarget(value) {
+  const input = String(value || "").trim();
+  if (isHttpUrl(input)) return input;
+  if (input && fs.existsSync(input) && fs.statSync(input).isFile()) return path.resolve(input);
+  return null;
+}
+
 async function cmdPlay(arg) {
   const item = resolveMediaItem(arg);
   const url  = item?.url || cleanVisibleText(arg);
   if (!url) { console.log(`${C.red}Usage: /play <n|col,row|url>${C.reset}`); return; }
+  const target = resolveMediaTarget(url);
+  if (!target) { console.log(`${C.red}Expected an http(s) URL, a local file, or a result number.${C.reset}`); return; }
   const mpv = findTool("mpv");
   if (!mpv) { console.log(`${C.red}mpv not found. Run /doctor or /install-help.${C.reset}`); return; }
-  const ytdlp      = findTool("ytdlp");
-  const resolvedUrl = isLikelyDirectMediaUrl(url) ? url : (resolvePlayableUrl(ytdlp, url) || url);
+  const ytdlp       = findTool("ytdlp");
+  const resolvedUrl = !isHttpUrl(target) || isLikelyDirectMediaUrl(target)
+    ? target
+    : (resolvePlayableUrl(ytdlp, target) || target);
   console.log(`${C.dim}Opening in mpv: ${resolvedUrl}${C.reset}`);
   spawn(mpv, buildMpvArgs(resolvedUrl, ytdlp), { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
@@ -1157,10 +1240,12 @@ async function cmdImg(arg) {
   const item = resolveMediaItem(arg);
   const url  = item?.url || cleanVisibleText(arg);
   if (!url) { console.log(`${C.red}Usage: /img <n|col,row|url>${C.reset}`); return; }
+  const target = resolveMediaTarget(url);
+  if (!target) { console.log(`${C.red}Expected an http(s) URL, a local file, or a result number.${C.reset}`); return; }
   const mpv = findTool("mpv");
   if (!mpv) { console.log(`${C.red}mpv not found. Run /doctor or /install-help.${C.reset}`); return; }
-  console.log(`${C.dim}Opening image in mpv: ${url}${C.reset}`);
-  spawn(mpv, buildImageMpvArgs(url), { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  console.log(`${C.dim}Opening image in mpv: ${target}${C.reset}`);
+  spawn(mpv, buildImageMpvArgs(target), { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
 
 // ─── Recon ────────────────────────────────────────────────────────────────────
@@ -1202,7 +1287,35 @@ async function cmdPing(target) {
 async function cmdHeaders(targetUrl) {
   const url = normalizeUrlInput(targetUrl) || session.currentUrl;
   if (!url) { console.log(`${C.red}Usage: /headers <url>${C.reset}`); return; }
+  if (!isHttpUrl(url)) { console.log(`${C.red}Usage: /headers <http(s) url>${C.reset}`); return; }
   console.log(runCommand(CURL_BIN, ["-sI", "--max-time", "10", url]) || "No output.");
+}
+
+async function cmdDns(target) {
+  const host = hostFromCurrent(target);
+  if (!host) { console.log(`${C.red}Usage: /dns <domain>${C.reset}`); return; }
+  console.log(`${C.dim}Resolving ${host} ...${C.reset}`);
+  const { records, notFound, error } = await resolveDnsRecords(host);
+  if (!records.length) {
+    console.log(`${C.yellow}${notFound ? `${host} does not exist in DNS.` : `No records found${error ? `: ${error}` : "."}`}${C.reset}`);
+    return;
+  }
+  console.log(`\n${C.a}DNS records for ${host}${C.reset}`);
+  for (const record of records) {
+    console.log(`  ${C.p}${record.type.padEnd(6)}${C.reset} ${record.value}`);
+  }
+}
+
+async function cmdWayback(targetUrl) {
+  const url = normalizeUrlInput(targetUrl) || session.currentUrl;
+  if (!url || !isHttpUrl(url)) { console.log(`${C.red}Usage: /wayback <url>${C.reset}`); return; }
+  console.log(`${C.dim}Looking up the Internet Archive for ${url} ...${C.reset}`);
+  try {
+    const snapshot = parseWaybackAvailable(await fetchJson(buildWaybackUrl(url)));
+    if (!snapshot) { console.log(`${C.yellow}No archived snapshot found.${C.reset}`); return; }
+    console.log(`${C.p}Closest snapshot:${C.reset} ${snapshot.when || snapshot.timestamp}`);
+    console.log(`  ${snapshot.url}`);
+  } catch (error) { console.log(`${C.red}Wayback error: ${error.message}${C.reset}`); }
 }
 
 async function cmdRobots(targetUrl) {
@@ -1355,11 +1468,13 @@ function cmdUnhex(text) {
 }
 
 function cmdPassgen(lenArg) {
-  const length = Number.parseInt(String(lenArg || "").trim(), 10) || 20;
-  const chars  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+";
-  const bytes  = crypto.randomBytes(length);
-  const pw     = Array.from(bytes).map(v => chars[v % chars.length]).join("");
+  const requested = Number.parseInt(String(lenArg || "").trim(), 10) || LIMITS.DEFAULT_PASSGEN_LEN;
+  const length    = Math.min(256, Math.max(8, requested));
+  const chars     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+";
+  // crypto.randomInt avoids the modulo bias that "byte % chars.length" introduces.
+  const pw        = Array.from({ length }, () => chars[crypto.randomInt(chars.length)]).join("");
   console.log(`Password (${length}): ${pw}`);
+  if (length !== requested) console.log(`${C.dim}Length adjusted to the 8-256 range.${C.reset}`);
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -1421,14 +1536,17 @@ async function cmdDoctor() {
   console.log(`  yt-dlp    ${findTool("ytdlp") || "not found"}`);
 
   try {
-    ensureDataDir();
+    await ensureDataDir();
     const testPath = path.join(PATHS.DATA_DIR, ".write-test");
-    fs.writeFileSync(testPath, "ok");
-    fs.unlinkSync(testPath);
+    await fs.promises.writeFile(testPath, "ok");
+    await fs.promises.unlink(testPath);
     console.log("  Data I/O  writable");
   } catch { console.log("  Data I/O  not writable"); }
 
-  const anyKeys = Object.keys(AI_PROVIDERS).some(id => aiKeyStore.getKeys(id).length > 0);
+  let anyKeys = false;
+  for (const id of Object.keys(AI_PROVIDERS)) {
+    if ((await aiKeyStore.getKeys(id)).length) { anyKeys = true; break; }
+  }
   console.log(`  AI keys   ${anyKeys ? "configured" : "none"}`);
 
   process.stdout.write(`  Network   testing ...`);
@@ -1526,153 +1644,6 @@ function cmdHome() {
   cmdHelpSimple();
 }
 
-// ─── ASCII Banner ─────────────────────────────────────────────────────────────
-//
-// Big pixel-block letters spelling "CIPHERBROWSE" in orange shades.
-// Font style: chunky retro block letters, 7 rows tall (like INF-EXPRESS in
-// the reference image).  Uses full-block (█), half-block (▀▄) and space chars.
-//
-// Colour key (banner only):
-//   O4 = pale gold      — very top highlights / shine
-//   O3 = bright orange  — upper body fill
-//   O2 = mid orange     — main body fill
-//   O1 = deep orange    — shadow / bottom edge
-//   RS = reset
-//
-// The copyright line uses LAV (lavender) as requested.
-// ─────────────────────────────────────────────────────────────────────────────
-function _legacyPrintBannerUnused() {
-  // Each letter is rendered as a 7-row column, 6 chars wide + 1 space gap.
-  // We build the full banner as 7 rows of coloured strings, then print them
-  // centred.  Using named letter arrays keeps the source readable.
-
-  // prettier-ignore
-  const LETTERS = {
-    // Row order: [top-cap, upper, mid-upper, mid, mid-lower, lower, base-shadow]
-    C: [
-      ` ${O4}▄▀▀▀▄${RS}`,
-      `${O3}█${RS}     `,
-      `${O3}█${RS}     `,
-      `${O3}█${RS}     `,
-      `${O2}█${RS}     `,
-      `${O2}█${RS}     `,
-      ` ${O1}▀▄▄▄▀${RS}`,
-    ],
-    I: [
-      `${O4}▄███▄${RS} `,
-      `  ${O3}█${RS}   `,
-      `  ${O3}█${RS}   `,
-      `  ${O3}█${RS}   `,
-      `  ${O2}█${RS}   `,
-      `  ${O2}█${RS}   `,
-      `${O1}▀███▀${RS} `,
-    ],
-    P: [
-      `${O4}▄███▄${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█████${RS} `,
-      `${O2}█${RS}     `,
-      `${O2}█${RS}     `,
-      `${O1}█${RS}     `,
-    ],
-    H: [
-      `${O4}█${RS}   ${O4}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█████${RS} `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O1}█${RS}   ${O1}█${RS} `,
-    ],
-    E: [
-      `${O4}█████${RS} `,
-      `${O3}█${RS}     `,
-      `${O3}█${RS}     `,
-      `${O3}████${RS}  `,
-      `${O2}█${RS}     `,
-      `${O2}█${RS}     `,
-      `${O1}█████${RS} `,
-    ],
-    R: [
-      `${O4}▄███▄${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█████${RS} `,
-      `${O2}█${RS}  ${O2}█${RS}  `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O1}█${RS}   ${O1}█${RS} `,
-    ],
-    B: [
-      `${O4}████${RS}  `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}████${RS}  `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O1}████${RS}  `,
-    ],
-    O: [
-      ` ${O4}▄███▄${RS}`,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      `${O2}█${RS}   ${O2}█${RS} `,
-      ` ${O1}▀███▀${RS}`,
-    ],
-    W: [
-      `${O4}█${RS}   ${O4}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS}   ${O3}█${RS} `,
-      `${O3}█${RS} ${O3}▄${RS} ${O3}█${RS} `,
-      `${O2}█${RS}${O2}▄█▄${RS}${O2}█${RS} `,
-      `${O2}█${RS}${O2}█ █${RS}${O2}█${RS} `,
-      `${O1}▀${RS} ${O1}▀${RS} ${O1}▀${RS} `,
-    ],
-    S: [
-      ` ${O4}████${RS} `,
-      `${O3}█${RS}     `,
-      `${O3}█${RS}     `,
-      ` ${O3}███${RS}  `,
-      `    ${O2}█${RS} `,
-      `    ${O2}█${RS} `,
-      ` ${O1}████${RS} `,
-    ],
-    // E is reused for the final E — already defined above
-  };
-
-  const WORD = ["C","I","P","H","E","R","B","R","O","W","S","E"];
-
-  // Build 7 rows by concatenating letter columns
-  const ROWS = Array.from({ length: 7 }, () => "");
-  for (const letter of WORD) {
-    const col = LETTERS[letter];
-    for (let row = 0; row < 7; row += 1) {
-      ROWS[row] += col[row];
-    }
-  }
-
-  // Calculate visual (plain-text) width of one row for centering.
-  // Each letter column is 6 printable chars + 1 space = 7 chars wide.
-  const VISUAL_WIDTH = WORD.length * 7;
-  const pad = " ".repeat(centerOffset(VISUAL_WIDTH));
-
-  console.log("");
-  console.log(hr("═"));
-  for (const row of ROWS) {
-    console.log(`${pad}${row}`);
-  }
-
-  // Copyright tagline — lavender, just below the logo
-  console.log(`\n${LAV}${centerPlain(`\u00A9 Kivitas`)}${RS}`);
-
-  // Subtitle in dim green
-  console.log(`${C.dim}${centerPlain("Terminal browser · search · media · AI · exports · recon")}${C.reset}`);
-  console.log(`${C.dim}${centerPlain("Type /help for commands  |  /doctor for diagnostics  |  /quit to exit")}${C.reset}`);
-  console.log(hr("═"));
-}
-
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 async function dispatch(rawInput) {
   const input = String(rawInput || "").trim();
@@ -1732,11 +1703,11 @@ async function dispatch(rawInput) {
     case "/readmode":
     case "/read":               cmdReadMode();                      break;
     case "/find":               cmdFind(args);                      break;
-    case "/export":             cmdExport(args || "md");            break;
+    case "/export":             await cmdExport(args || "md");      break;
     case "/share":              cmdShare();                         break;
     case "/ai":                 await cmdAI(args);                  break;
     case "/aikey":
-      if (args.toLowerCase() === "show") cmdAIKeyShow();
+      if (args.toLowerCase() === "show") await cmdAIKeyShow();
       else console.log(`${C.red}Usage: /aikey show${C.reset}`);
       break;
     case "/play":               await cmdPlay(args);                break;
@@ -1751,6 +1722,8 @@ async function dispatch(rawInput) {
     case "/myip":               await cmdMyIp();                    break;
     case "/ipinfo":             await cmdIpInfo(args);              break;
     case "/trace":              await cmdTrace();                   break;
+    case "/dns":                await cmdDns(args);                 break;
+    case "/wayback":            await cmdWayback(args);             break;
     case "/scan":               await cmdScan(args);                break;
     case "/extract":            await cmdExtract(args);             break;
     case "/crawl":              await cmdCrawl(args);               break;
@@ -1798,161 +1771,7 @@ async function runOneShot(args) {
   return false;
 }
 
-// Clean runtime banner override using a thick orange block style.
-function _blockPrintBannerUnused() {
-  const bannerLines = [
-    " ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██████╗ ██╗    ██╗███████╗███████╗",
-    "██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗██╔══██╗██╔══██╗██║    ██║██╔════╝██╔════╝",
-    "██║     ██║██████╔╝███████║█████╗  ██████╔╝██████╔╝██████╔╝██║ █╗ ██║███████╗█████╗  ",
-    "██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██╔══██╗██╔═══╝ ██║███╗██║╚════██║██╔══╝  ",
-    "╚██████╗██║██║     ██║  ██║███████╗██║  ██║██████╔╝██║     ╚███╔███╔╝███████║███████╗",
-    " ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ ╚═╝      ╚══╝╚══╝ ╚══════╝╚══════╝",
-  ];
-  const lineColors = [O4, O3, O3, O2, O2, O1];
-  const visualWidth = Math.max(...bannerLines.map(line => line.length));
-  const pad = " ".repeat(centerOffset(visualWidth));
-
-  console.log("");
-  console.log(hr("="));
-  bannerLines.forEach((line, index) => {
-    const color = lineColors[index] || O2;
-    console.log(`${pad}${color}${line}${RS}`);
-  });
-  console.log(`\n${LAV}${centerPlain("\u00A9 Kivitas")}${RS}`);
-  console.log(`${C.dim}${centerPlain("Terminal browser · search · media · AI · exports · recon")}${C.reset}`);
-  console.log(`${C.dim}${centerPlain("Type /help for commands  |  /doctor for diagnostics  |  /quit to exit")}${C.reset}`);
-  console.log(hr("="));
-}
-
-function _previousBannerUnused() {
-  const bannerLines = [
-    "  ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██████╗ ██╗    ██╗███████╗███████╗",
-    " ██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗██╔══██╗██╔═══██╗██║    ██║██╔════╝██╔════╝",
-    " ██║     ██║██████╔╝███████║█████╗  ██████╔╝██████╔╝██║   ██║██║ █╗ ██║███████╗█████╗  ",
-    " ██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██╔══██╗██║   ██║██║███╗██║╚════██║██╔══╝  ",
-    " ╚██████╗██║██║     ██║  ██║███████╗██║  ██║██████╔╝╚██████╔╝╚███╔███╔╝███████║███████╗",
-    "  ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝  ╚═════╝  ╚══╝╚══╝ ╚══════╝╚══════╝",
-  ];
-  const lineColors = [O4, O4, O3, O3, O2, O1];
-  const shadowColor = "\x1b[38;5;94m";
-  const visualWidth = Math.max(...bannerLines.map(line => line.length));
-  const pad = " ".repeat(centerOffset(visualWidth));
-  console.log("");
-  console.log(hr("="));
-  if (process.stdout.isTTY) {
-    console.log("");
-    bannerLines.forEach(line => {
-      console.log(`${pad}  ${shadowColor}${line}${RS}`);
-    });
-    process.stdout.write(`\x1b[${bannerLines.length + 1}A`);
-  }
-  bannerLines.forEach((line, index) => {
-    const color = lineColors[index] || O2;
-    console.log(`${pad}${color}${line}${RS}`);
-  });
-  console.log(`\n${LAV}${centerPlain("\u00A9 Kivitas")}${RS}`);
-  console.log(`${C.dim}${centerPlain("Terminal browser · search · media · AI · exports · recon")}${C.reset}`);
-  console.log(`${C.dim}${centerPlain("Type /help for commands  |  /doctor for diagnostics  |  /quit to exit")}${C.reset}`);
-  console.log(hr("="));
-}
-
-function _brokenPixelBannerUnused() {
-  const glyphs = {
-    C: ["0111110", "1100000", "1100000", "1100000", "1100000", "0111110"],
-    I: ["1111111", "0011100", "0011100", "0011100", "0011100", "1111111"],
-    P: ["1111110", "1100011", "1111110", "1100000", "1100000", "1100000"],
-    H: ["1100011", "1100011", "1111111", "1100011", "1100011", "1100011"],
-    E: ["1111111", "1100000", "1111110", "1100000", "1100000", "1111111"],
-    R: ["1111110", "1100011", "1111110", "1101100", "1100110", "1100011"],
-    B: ["1111110", "1100011", "1111110", "1100011", "1100011", "1111110"],
-    O: ["0111110", "1100011", "1100011", "1100011", "1100011", "0111110"],
-    W: ["1100011", "1100011", "1101011", "1111111", "1111111", "1100011"],
-    S: ["0111111", "1100000", "0111110", "0000011", "0000011", "1111110"],
-  };
-  const word = "CIPHERBROWSE".split("");
-  const shadowDx = 1;
-  const shadowDy = 1;
-  const gap = 2;
-  const cell = "██";
-  const shadowCell = "▓▓";
-  const fillByRow = [O4, O4, O3, O3, O2, O1];
-  const shadowColor = "\x1b[38;5;94m";
-  const height = 6 + shadowDy;
-  const widths = word.map(letter => glyphs[letter][0].length);
-  const totalCols = widths.reduce((sum, width) => sum + width, 0) + (word.length - 1) * gap + shadowDx;
-  const canvas = Array.from({ length: height }, () => Array.from({ length: totalCols }, () => null));
-
-  let cursorX = 0;
-  word.forEach((letter, index) => {
-    const glyph = glyphs[letter];
-    for (let y = 0; y < glyph.length; y += 1) {
-      for (let x = 0; x < glyph[y].length; x += 1) {
-        if (glyph[y][x] !== "1") continue;
-        const shadowX = cursorX + x + shadowDx;
-        const shadowY = y + shadowDy;
-        if (!canvas[shadowY][shadowX]) {
-          canvas[shadowY][shadowX] = shadowColor;
-        }
-      }
-    }
-    for (let y = 0; y < glyph.length; y += 1) {
-      for (let x = 0; x < glyph[y].length; x += 1) {
-        if (glyph[y][x] !== "1") continue;
-        canvas[y][cursorX + x] = fillByRow[y];
-      }
-    }
-    cursorX += glyph[0].length;
-    if (index < word.length - 1) cursorX += gap;
-  });
-
-  const visualWidth = totalCols * cell.length;
-  const pad = " ".repeat(centerOffset(visualWidth));
-  console.log("");
-  console.log(hr("="));
-  canvas.forEach(row => {
-    const rendered = row.map(token => {
-      if (!token) return "  ";
-      if (token === shadowColor) return `${shadowColor}${shadowCell}${RS}`;
-      return `${token}${cell}${RS}`;
-    }).join("");
-    console.log(`${pad}${rendered}`);
-  });
-  console.log(`\n${LAV}${centerPlain("\u00A9 Kivitas")}${RS}`);
-  console.log(`${C.dim}${centerPlain("Terminal browser - search - media - AI - exports - recon")}${C.reset}`);
-  console.log(`${C.dim}${centerPlain("Type /help for commands  |  /doctor for diagnostics  |  /quit to exit")}${C.reset}`);
-  console.log(hr("="));
-}
-
-function _missingOBannerUnused() {
-  const bannerLines = [
-    "  ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██████╗ ██╗    ██╗███████╗███████╗",
-    " ██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗██╔══██╗██╔══██╗██║    ██║██╔════╝██╔════╝",
-    " ██║     ██║██████╔╝███████║█████╗  ██████╔╝██████╔╝██████╔╝██║ █╗ ██║███████╗█████╗  ",
-    " ██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██╔══██╗██╔══██╗██║███╗██║╚════██║██╔══╝  ",
-    " ╚██████╗██║██║     ██║  ██║███████╗██║  ██║██████╔╝██║  ██║╚███╔███╔╝███████║███████╗",
-    "  ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝╚══════╝",
-  ];
-  const colors = [O4, O4, O3, O3, O2, O1];
-  const shadowColor = "\x1b[38;5;94m";
-  const visualWidth = Math.max(...bannerLines.map(line => line.length));
-  const pad = " ".repeat(centerOffset(visualWidth));
-
-  console.log("");
-  console.log(hr("="));
-  if (process.stdout.isTTY) {
-    console.log("");
-    bannerLines.forEach(line => console.log(`${pad}  ${shadowColor}${line}${RS}`));
-    process.stdout.write(`\x1b[${bannerLines.length + 1}A`);
-  }
-  bannerLines.forEach((line, index) => {
-    console.log(`${pad}${colors[index] || O2}${line}${RS}`);
-  });
-  console.log(`\n${LAV}${centerPlain("\u00A9 Kivitas")}${RS}`);
-  console.log(`${C.dim}${centerPlain("Terminal browser - search - media - AI - exports - recon")}${C.reset}`);
-  console.log(`${C.dim}${centerPlain("Type /help for commands  |  /doctor for diagnostics  |  /quit to exit")}${C.reset}`);
-  console.log(hr("="));
-}
-
+// ─── Banner ───────────────────────────────────────────────────────────────────
 function printBanner() {
   const bannerLines = [
     " ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██████╗  ██████╗ ██╗    ██╗███████╗███████╗",

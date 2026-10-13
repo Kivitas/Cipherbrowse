@@ -1,6 +1,6 @@
 # CipherBrowse (Main Package)
 
-This folder contains the runnable package for CipherBrowse `1.0.1`.
+This folder contains the runnable package for CipherBrowse `1.1.0`. Requires Node.js `22+`.
 
 For repository-level usage, launcher instructions, screenshots, and the full GitHub-facing project overview, see:
 
@@ -18,6 +18,7 @@ node .\src\index.js --help
 
 ```powershell
 npm run check
+npm test
 npm run smoke
 npm run verify
 ```

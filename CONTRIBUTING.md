@@ -4,7 +4,7 @@ Thank you for your interest in contributing.
 
 ## Requirements
 
-- Node.js `18+`
+- Node.js `22+` (CI tests 22 and 24)
 - Git
 
 ## Development Setup
@@ -22,24 +22,36 @@ Run all checks from the `Main` directory:
 
 ```powershell
 npm run check
+npm test
 npm run smoke
 npm run verify
 ```
 
-All three must pass before opening a PR.
+`check`, `test` and `smoke` must pass before opening a PR. `verify` runs live searches against third-party sites; if it fails because an upstream site changed, say so in the PR rather than hiding the failure.
+
+## Adding or Changing a Command
+
+1. Add the handler in `src/index.js` and a `case` in `dispatch()`.
+2. Add the command to `ALL_COMMANDS` and the help rows in `src/features/help.js`.
+3. Put any parsing or formatting logic in a `src/features/*.js` module so it can be unit-tested without the network.
+4. Add tests for that logic in `scripts/test.js`.
+5. Update `DOCUMENTATION.md`, and add an entry to `CHANGELOG.md`.
 
 ## Structure
 
 ```text
 Cipherbrowse/
   INSTALLATION.md
+  CHANGELOG.md
   Main/
     src/
       index.js
-      core/
-      features/
+      core/        config, network, storage, security, text
+      features/    ai, page, media, recon, search, video, help
+      ui/          render
     scripts/
-      verify.js
+      test.js      unit tests (node --test)
+      verify.js    live smoke checks
     tools/
     package.json
 ```
